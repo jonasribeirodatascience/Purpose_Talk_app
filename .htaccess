@@ -1,0 +1,21 @@
+<IfModule mod_rewrite.c>
+  RewriteEngine On
+  RewriteBase /
+
+  # Preserve .well-known/assetlinks.json for Google Play TWA verification
+  RewriteRule ^\.well-known/ - [L]
+
+  # Serve existing compiled assets and files directly
+  RewriteCond %{REQUEST_FILENAME} -f [OR]
+  RewriteCond %{REQUEST_FILENAME} -d
+  RewriteRule ^ - [L]
+
+  # Route SPA paths to index.html
+  RewriteRule . /index.html [L]
+</IfModule>
+
+<FilesMatch "^(index\.html|sw\.js|registerSW\.js|manifest\.webmanifest)$">
+  <IfModule mod_headers.c>
+    Header set Cache-Control "no-cache, no-store, must-revalidate"
+  </IfModule>
+</FilesMatch>
