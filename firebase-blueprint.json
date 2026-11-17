@@ -1,0 +1,743 @@
+{
+  "entities": {
+    "UserProgress": {
+      "title": "UserProgress",
+      "description": "Progresso de aprendizado e preferências de áudio do usuário no Purpose Talk.",
+      "type": "object",
+      "properties": {
+        "uid": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$",
+          "description": "ID do usuário autenticado (Firebase Auth UID)."
+        },
+        "displayName": {
+          "type": "string",
+          "minLength": 0,
+          "maxLength": 120,
+          "description": "Nome público de exibição do aluno."
+        },
+        "userLevel": {
+          "type": "string",
+          "enum": ["beginner", "intermediate", "advanced"],
+          "maxLength": 20,
+          "description": "Nível atual do aluno."
+        },
+        "focus": {
+          "type": "string",
+          "enum": ["worship", "tech", "mixed"],
+          "maxLength": 20,
+          "description": "Foco de aprendizado selecionado."
+        },
+        "xp": {
+          "type": "integer",
+          "description": "Total de pontos de experiência acumulados."
+        },
+        "streak": {
+          "type": "integer",
+          "description": "Dias consecutivos de prática (ofensiva)."
+        },
+        "isAudioMuted": {
+          "type": "boolean",
+          "description": "Estado de mudo do áudio automático."
+        },
+        "speechRate": {
+          "type": "number",
+          "description": "Velocidade de fala configurada para a IA."
+        },
+        "theme": {
+          "type": "string",
+          "enum": ["dark", "light"],
+          "maxLength": 10,
+          "description": "Tema visual preferido (escuro ou claro de alto contraste)."
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Timestamp de criação da conta no servidor."
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Timestamp da última atualização no servidor."
+        }
+      },
+      "required": [
+        "uid",
+        "displayName",
+        "userLevel",
+        "focus",
+        "xp",
+        "streak",
+        "isAudioMuted",
+        "speechRate",
+        "createdAt",
+        "updatedAt"
+      ]
+    },
+    "UserPrivateInfo": {
+      "title": "UserPrivateInfo",
+      "description": "Dados privados (PII) isolados do usuário autenticado.",
+      "type": "object",
+      "properties": {
+        "uid": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$",
+          "description": "ID do usuário proprietário."
+        },
+        "email": {
+          "type": "string",
+          "format": "email",
+          "minLength": 3,
+          "maxLength": 254,
+          "description": "E-mail verificado da conta Google."
+        },
+        "photoURL": {
+          "type": "string",
+          "maxLength": 500,
+          "description": "URL da foto de perfil."
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Data de criação do registro privado."
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Data da última atualização do registro privado."
+        }
+      },
+      "required": ["uid", "email", "createdAt", "updatedAt"]
+    },
+    "VocabularyEntry": {
+      "title": "VocabularyEntry",
+      "description": "Termo ou expressão salva no caderno pessoal de vocabulário.",
+      "type": "object",
+      "properties": {
+        "uid": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$",
+          "description": "ID do usuário proprietário."
+        },
+        "term": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 120,
+          "description": "Termo em inglês."
+        },
+        "phonetic": {
+          "type": "string",
+          "maxLength": 120,
+          "description": "Transcrição fonética."
+        },
+        "meaning": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 300,
+          "description": "Significado em português."
+        },
+        "example": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 500,
+          "description": "Frase de exemplo em inglês."
+        },
+        "category": {
+          "type": "string",
+          "enum": ["worship", "tech", "general"],
+          "maxLength": 20,
+          "description": "Categoria do termo."
+        },
+        "srsRepetitions": {
+          "type": "integer",
+          "description": "Contagem de acertos consecutivos na repetição espaçada."
+        },
+        "srsIntervalDays": {
+          "type": "integer",
+          "description": "Intervalo atual em dias até a próxima revisão."
+        },
+        "srsEaseFactor": {
+          "type": "number",
+          "description": "Fator de facilidade SM-2 (1.3 a 4.0)."
+        },
+        "srsLapses": {
+          "type": "integer",
+          "description": "Quantidade de esquecimentos registrados neste card."
+        },
+        "srsNextReviewAt": {
+          "type": "integer",
+          "description": "Epoch ms agendado para a próxima revisão."
+        },
+        "srsLastReviewedAt": {
+          "type": "integer",
+          "description": "Epoch ms da última revisão realizada."
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Data de criação."
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Data da última atualização."
+        }
+      },
+      "required": ["uid", "term", "meaning", "example", "createdAt", "updatedAt"]
+    },
+    "AchievementProgress": {
+      "title": "AchievementProgress",
+      "description": "Progresso individual e status de desbloqueio de uma conquista.",
+      "type": "object",
+      "properties": {
+        "uid": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$",
+          "description": "ID do usuário proprietário."
+        },
+        "badgeId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 64,
+          "pattern": "^[a-zA-Z0-9_\\-]+$",
+          "description": "Identificador da medalha."
+        },
+        "currentProgress": {
+          "type": "integer",
+          "description": "Progresso atual rumo à meta."
+        },
+        "isUnlocked": {
+          "type": "boolean",
+          "description": "Indica se a medalha já foi desbloqueada."
+        },
+        "unlockedAt": {
+          "type": "integer",
+          "description": "Epoch ms de quando foi desbloqueada."
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Timestamp de criação."
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Timestamp de atualização."
+        }
+      },
+      "required": ["uid", "badgeId", "currentProgress", "isUnlocked", "createdAt", "updatedAt"]
+    },
+    "PronunciationPracticeLog": {
+      "title": "PronunciationPracticeLog",
+      "description": "Registro de pontuação de prática de pronúncia em tempo real.",
+      "type": "object",
+      "properties": {
+        "uid": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$",
+          "description": "ID do usuário proprietário."
+        },
+        "targetText": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 500,
+          "description": "Frase alvo em inglês."
+        },
+        "spokenText": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 500,
+          "description": "Texto transcrito da fala do usuário."
+        },
+        "accuracyScore": {
+          "type": "integer",
+          "description": "Pontuação de precisão fonética de 0 a 100."
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Timestamp de criação."
+        }
+      },
+      "required": ["uid", "targetText", "spokenText", "accuracyScore", "createdAt"]
+    },
+    "DailyActivity": {
+      "title": "DailyActivity",
+      "description": "Resumo diário de XP ganho e frequência de atividades nos últimos 30+ dias.",
+      "type": "object",
+      "properties": {
+        "uid": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$",
+          "description": "ID do usuário proprietário."
+        },
+        "date": {
+          "type": "string",
+          "minLength": 10,
+          "maxLength": 10,
+          "pattern": "^\\d{4}-\\d{2}-\\d{2}$",
+          "description": "Data local no formato YYYY-MM-DD."
+        },
+        "xpEarned": {
+          "type": "integer",
+          "description": "XP acumulado neste dia."
+        },
+        "activitiesCount": {
+          "type": "integer",
+          "description": "Quantidade de atividades de estudo realizadas neste dia."
+        },
+        "wordsSaved": {
+          "type": "integer",
+          "description": "Quantidade de palavras salvas neste dia."
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Timestamp de criação."
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Timestamp da última atualização."
+        }
+      },
+      "required": ["uid", "date", "xpEarned", "activitiesCount", "wordsSaved", "createdAt", "updatedAt"]
+    },
+    "PaymentMethod": {
+      "title": "PaymentMethod",
+      "description": "Metadados mascarados e tokenizados de forma de pagamento do usuário (sem PAN completo nem CVV).",
+      "type": "object",
+      "properties": {
+        "uid": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$",
+          "description": "ID do usuário proprietário."
+        },
+        "type": {
+          "type": "string",
+          "enum": ["credit_card", "debit_card", "pix"],
+          "maxLength": 20,
+          "description": "Modalidade de pagamento."
+        },
+        "label": {
+          "type": "string",
+          "minLength": 2,
+          "maxLength": 80,
+          "description": "Rótulo resumido para exibição."
+        },
+        "holderName": {
+          "type": "string",
+          "minLength": 2,
+          "maxLength": 80,
+          "description": "Nome do titular."
+        },
+        "brand": {
+          "type": "string",
+          "enum": ["visa", "mastercard", "amex", "elo", "hipercard", "pix"],
+          "maxLength": 20,
+          "description": "Bandeira do cartão ou PIX."
+        },
+        "last4": {
+          "type": "string",
+          "minLength": 4,
+          "maxLength": 4,
+          "pattern": "^[0-9]{4}$",
+          "description": "Últimos 4 dígitos do cartão."
+        },
+        "expiryMonth": {
+          "type": "integer",
+          "description": "Mês de validade do cartão (1 a 12)."
+        },
+        "expiryYear": {
+          "type": "integer",
+          "description": "Ano de validade do cartão (ex: 2029)."
+        },
+        "pixKeyMasked": {
+          "type": "string",
+          "minLength": 3,
+          "maxLength": 80,
+          "description": "Chave PIX mascarada para exibição."
+        },
+        "isDefault": {
+          "type": "boolean",
+          "description": "Indica se é o método de pagamento principal."
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Timestamp de criação."
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Timestamp da última atualização."
+        }
+      },
+      "required": ["uid", "type", "label", "holderName", "brand", "isDefault", "createdAt", "updatedAt"]
+    },
+    "UserSubscription": {
+      "title": "UserSubscription",
+      "description": "Assinatura de plano com período inicial de 7 dias grátis e meio de pagamento vinculado.",
+      "type": "object",
+      "properties": {
+        "uid": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$",
+          "description": "ID do usuário assinante."
+        },
+        "userEmail": {
+          "type": "string",
+          "format": "email",
+          "minLength": 3,
+          "maxLength": 254,
+          "description": "E-mail verificado do assinante."
+        },
+        "userName": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 120,
+          "description": "Nome do assinante."
+        },
+        "planId": {
+          "type": "string",
+          "enum": ["essencial_mensal", "pro_mensal", "pro_anual"],
+          "maxLength": 40,
+          "description": "Identificador do plano contratado."
+        },
+        "planName": {
+          "type": "string",
+          "minLength": 2,
+          "maxLength": 80,
+          "description": "Nome do plano."
+        },
+        "priceBrlCents": {
+          "type": "integer",
+          "description": "Valor em centavos de BRL."
+        },
+        "billingCycle": {
+          "type": "string",
+          "enum": ["monthly", "annual"],
+          "maxLength": 20,
+          "description": "Periodicidade da cobrança."
+        },
+        "status": {
+          "type": "string",
+          "enum": ["trialing", "active", "past_due", "canceled"],
+          "maxLength": 20,
+          "description": "Status atual da assinatura."
+        },
+        "gateway": {
+          "type": "string",
+          "enum": ["mercadopago", "stripe"],
+          "maxLength": 20,
+          "description": "Gateway responsável pela cobrança."
+        },
+        "paymentMethodId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 64,
+          "pattern": "^[a-zA-Z0-9_\\-]+$",
+          "description": "ID da forma de pagamento cadastrada."
+        },
+        "paymentMethodLabel": {
+          "type": "string",
+          "minLength": 2,
+          "maxLength": 80,
+          "description": "Descrição mascarada da forma de pagamento vinculada."
+        },
+        "trialDays": {
+          "type": "integer",
+          "description": "Dias iniciais gratuitos (7)."
+        },
+        "trialStartedAt": {
+          "type": "integer",
+          "description": "Epoch ms de início do trial."
+        },
+        "trialEndsAt": {
+          "type": "integer",
+          "description": "Epoch ms de término do trial."
+        },
+        "nextBillingAt": {
+          "type": "integer",
+          "description": "Epoch ms da próxima cobrança prevista."
+        },
+        "gatewaySubscriptionId": {
+          "type": "string",
+          "maxLength": 128,
+          "description": "Identificador da assinatura no gateway."
+        },
+        "cancelAtPeriodEnd": {
+          "type": "boolean",
+          "description": "Indica cancelamento agendado ao fim do período."
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Timestamp de criação."
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Timestamp de atualização."
+        }
+      },
+      "required": [
+        "uid",
+        "userEmail",
+        "userName",
+        "planId",
+        "planName",
+        "priceBrlCents",
+        "billingCycle",
+        "status",
+        "gateway",
+        "paymentMethodId",
+        "paymentMethodLabel",
+        "trialDays",
+        "trialStartedAt",
+        "trialEndsAt",
+        "nextBillingAt",
+        "cancelAtPeriodEnd",
+        "createdAt",
+        "updatedAt"
+      ]
+    },
+    "AdminUser": {
+      "title": "AdminUser",
+      "description": "Registro de administrador criador autorizado a acessar indicadores globais.",
+      "type": "object",
+      "properties": {
+        "uid": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$",
+          "description": "UID do administrador."
+        },
+        "email": {
+          "type": "string",
+          "format": "email",
+          "maxLength": 254,
+          "description": "E-mail do administrador."
+        }
+      },
+      "required": ["uid", "email"]
+    },
+    "LgpdConsent": {
+      "title": "LgpdConsent",
+      "description": "Registro auditável de aceite aos Termos de Uso e Política de Privacidade (LGPD).",
+      "type": "object",
+      "properties": {
+        "uid": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$",
+          "description": "ID do usuário titular dos dados."
+        },
+        "userEmail": {
+          "type": "string",
+          "format": "email",
+          "minLength": 3,
+          "maxLength": 254,
+          "description": "E-mail verificado do titular."
+        },
+        "acceptedTerms": {
+          "type": "boolean",
+          "description": "Aceite explícito aos Termos de Uso."
+        },
+        "acceptedPrivacy": {
+          "type": "boolean",
+          "description": "Aceite explícito à Política de Privacidade e LGPD."
+        },
+        "marketingOptIn": {
+          "type": "boolean",
+          "description": "Consentimento opcional para comunicações educacionais."
+        },
+        "termsVersion": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 20,
+          "description": "Versão dos Termos de Uso aceita."
+        },
+        "privacyVersion": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 20,
+          "description": "Versão da Política de Privacidade LGPD aceita."
+        },
+        "acceptedAt": {
+          "type": "integer",
+          "description": "Epoch ms do aceite registrado."
+        },
+        "revokedAt": {
+          "type": "integer",
+          "description": "Epoch ms de eventual revogação de consentimento."
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Timestamp de criação no servidor."
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Timestamp da última atualização no servidor."
+        }
+      },
+      "required": [
+        "uid",
+        "acceptedTerms",
+        "acceptedPrivacy",
+        "marketingOptIn",
+        "termsVersion",
+        "privacyVersion",
+        "acceptedAt",
+        "createdAt",
+        "updatedAt"
+      ]
+    },
+    "PushSubscription": {
+      "title": "PushSubscription",
+      "description": "Token FCM do navegador e preferências de lembrete diário de streak em risco.",
+      "type": "object",
+      "properties": {
+        "uid": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$",
+          "description": "ID do usuário proprietário."
+        },
+        "deviceId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 64,
+          "pattern": "^[a-zA-Z0-9_\\-]+$",
+          "description": "Identificador estável do navegador/dispositivo."
+        },
+        "fcmToken": {
+          "type": "string",
+          "minLength": 8,
+          "maxLength": 512,
+          "description": "Token de registro do Firebase Cloud Messaging ou modo local."
+        },
+        "permissionStatus": {
+          "type": "string",
+          "enum": ["default", "granted", "denied"],
+          "maxLength": 20,
+          "description": "Permissão de notificação do navegador."
+        },
+        "enabled": {
+          "type": "boolean",
+          "description": "Indica se os lembretes diários estão ativos."
+        },
+        "reminderHour": {
+          "type": "integer",
+          "description": "Hora preferida (0-23) para alerta diário de streak em risco."
+        },
+        "streakAtRisk": {
+          "type": "boolean",
+          "description": "Indica se a ofensiva do usuário está em risco hoje."
+        },
+        "lastPracticedDate": {
+          "type": "string",
+          "minLength": 10,
+          "maxLength": 10,
+          "pattern": "^\\d{4}-\\d{2}-\\d{2}$",
+          "description": "Última data em que houve atividade."
+        },
+        "lastNotifiedDate": {
+          "type": "string",
+          "minLength": 10,
+          "maxLength": 10,
+          "pattern": "^\\d{4}-\\d{2}-\\d{2}$",
+          "description": "Última data em que o alerta diário foi disparado."
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Timestamp de criação."
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Timestamp da última atualização."
+        }
+      },
+      "required": [
+        "uid",
+        "deviceId",
+        "fcmToken",
+        "permissionStatus",
+        "enabled",
+        "reminderHour",
+        "streakAtRisk",
+        "createdAt",
+        "updatedAt"
+      ]
+    }
+  },
+  "firestore": {
+    "/users/{userId}": {
+      "schema": { "$ref": "#/entities/UserProgress" },
+      "description": "Documento principal de progresso e configurações de aprendizado do usuário."
+    },
+    "/users/{userId}/private/{docId}": {
+      "schema": { "$ref": "#/entities/UserPrivateInfo" },
+      "description": "Subcoleção isolada para informações privadas (PII) do usuário."
+    },
+    "/users/{userId}/vocabulary/{wordId}": {
+      "schema": { "$ref": "#/entities/VocabularyEntry" },
+      "description": "Palavras salvas pelo usuário no caderno de vocabulário."
+    },
+    "/users/{userId}/achievements/{badgeId}": {
+      "schema": { "$ref": "#/entities/AchievementProgress" },
+      "description": "Progresso e medalhas desbloqueadas pelo usuário."
+    },
+    "/users/{userId}/pronunciationLogs/{logId}": {
+      "schema": { "$ref": "#/entities/PronunciationPracticeLog" },
+      "description": "Histórico de análises de pronúncia em tempo real."
+    },
+    "/users/{userId}/dailyActivity/{dateId}": {
+      "schema": { "$ref": "#/entities/DailyActivity" },
+      "description": "Registro diário de XP ganho e frequência de atividades do usuário."
+    },
+    "/users/{userId}/paymentMethods/{methodId}": {
+      "schema": { "$ref": "#/entities/PaymentMethod" },
+      "description": "Formas de pagamento salvas pelo usuário (apenas metadados mascarados)."
+    },
+    "/subscriptions/{userId}": {
+      "schema": { "$ref": "#/entities/UserSubscription" },
+      "description": "Assinatura ativa ou em teste grátis (7 dias) de cada usuário."
+    },
+    "/admins/{adminId}": {
+      "schema": { "$ref": "#/entities/AdminUser" },
+      "description": "Lista de administradores autorizados do painel do criador."
+    },
+    "/lgpdConsents/{userId}": {
+      "schema": { "$ref": "#/entities/LgpdConsent" },
+      "description": "Registro de aceite e revogação LGPD de cada usuário."
+    },
+    "/users/{userId}/pushSubscriptions/{deviceId}": {
+      "schema": { "$ref": "#/entities/PushSubscription" },
+      "description": "Tokens FCM e preferências de lembretes de ofensiva por navegador."
+    }
+  }
+}

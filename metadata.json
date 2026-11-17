@@ -1,0 +1,6 @@
+{
+  "name": "Faith & Tech English Mentor",
+  "description": "Mentor interativo de IA para aprender e praticar inglês com foco em conversação real, louvores evangélicos e carreira em tecnologia e ciência de dados.",
+  "requestFramePermissions": ["microphone"],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

@@ -1,0 +1,610 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // Global Safety Net: Default-deny catch-all
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    // --- Global Reusable Primitives ---
+    function isValidId(id) {
+      return id is string && id.size() >= 1 && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
+    }
+
+    function incoming() {
+      return request.resource.data;
+    }
+
+    function existing() {
+      return resource.data;
+    }
+
+    function isSignedIn() {
+      return request.auth != null && request.auth.token.email_verified == true;
+    }
+
+    function isAdmin() {
+      return isSignedIn() && (
+        exists(/databases/$(database)/documents/admins/$(request.auth.uid)) ||
+        (request.auth.token.email is string && request.auth.token.email.lower() == 'jonasribeiro.datascience@gmail.com')
+      );
+    }
+
+    function isOwner(userId) {
+      return isSignedIn() && request.auth.uid == userId;
+    }
+
+    function hasUserParent(userId) {
+      return exists(/databases/$(database)/documents/users/$(userId))
+        || existsAfter(/databases/$(database)/documents/users/$(userId));
+    }
+
+    // --- Validation Blueprints (Anti-Update-Gap) ---
+    function isValidUserProgress(data, userId) {
+      return data.keys().hasAll([
+          'uid', 'displayName', 'userLevel', 'focus',
+          'xp', 'streak', 'isAudioMuted', 'speechRate',
+          'createdAt', 'updatedAt'
+        ])
+        && data.keys().hasOnly([
+          'uid', 'displayName', 'userLevel', 'focus',
+          'xp', 'streak', 'isAudioMuted', 'speechRate', 'theme',
+          'createdAt', 'updatedAt'
+        ])
+        && data.uid is string
+        && data.uid == request.auth.uid
+        && data.uid == userId
+        && data.uid.size() >= 1 && data.uid.size() <= 128
+        && data.displayName is string && data.displayName.size() <= 120
+        && data.userLevel is string && data.userLevel in ['beginner', 'intermediate', 'advanced']
+        && data.focus is string && data.focus in ['worship', 'tech', 'mixed']
+        && data.xp is int && data.xp >= 0 && data.xp <= 500000
+        && data.streak is int && data.streak >= 0 && data.streak <= 3650
+        && data.isAudioMuted is bool
+        && (data.speechRate is int || data.speechRate is float) && data.speechRate >= 0.5 && data.speechRate <= 2.0
+        && (!('theme' in data) || (data.theme is string && data.theme in ['dark', 'light']))
+        && data.createdAt is timestamp
+        && data.updatedAt is timestamp;
+    }
+
+    function isValidUserPrivateInfo(data, userId) {
+      return data.keys().hasAll(['uid', 'email', 'createdAt', 'updatedAt'])
+        && data.keys().hasOnly(['uid', 'email', 'photoURL', 'createdAt', 'updatedAt'])
+        && data.uid is string
+        && data.uid == request.auth.uid
+        && data.uid == userId
+        && data.uid.size() >= 1 && data.uid.size() <= 128
+        && data.email is string && data.email.size() >= 3 && data.email.size() <= 254
+        && (!('email' in request.auth.token) || (request.auth.token.email is string && data.email.lower() == request.auth.token.email.lower()))
+        && (!('photoURL' in data) || (data.photoURL is string && data.photoURL.size() >= 8 && data.photoURL.size() <= 500 && data.photoURL.matches('^https://.*')))
+        && data.createdAt is timestamp
+        && data.updatedAt is timestamp;
+    }
+
+    function isValidVocabularyEntry(data, userId) {
+      return data.keys().hasAll(['uid', 'term', 'meaning', 'example', 'createdAt', 'updatedAt'])
+        && data.keys().hasOnly([
+          'uid', 'term', 'phonetic', 'meaning', 'example', 'category',
+          'srsRepetitions', 'srsIntervalDays', 'srsEaseFactor', 'srsLapses',
+          'srsNextReviewAt', 'srsLastReviewedAt',
+          'createdAt', 'updatedAt'
+        ])
+        && data.uid is string
+        && data.uid == request.auth.uid
+        && data.uid == userId
+        && data.uid.size() >= 1 && data.uid.size() <= 128
+        && data.term is string && data.term.size() >= 1 && data.term.size() <= 120
+        && (!('phonetic' in data) || (data.phonetic is string && data.phonetic.size() <= 120))
+        && data.meaning is string && data.meaning.size() >= 1 && data.meaning.size() <= 300
+        && data.example is string && data.example.size() >= 1 && data.example.size() <= 500
+        && (!('category' in data) || (data.category is string && data.category in ['worship', 'tech', 'general']))
+        && (!('srsRepetitions' in data) || (data.srsRepetitions is int && data.srsRepetitions >= 0 && data.srsRepetitions <= 10000))
+        && (!('srsIntervalDays' in data) || (data.srsIntervalDays is int && data.srsIntervalDays >= 0 && data.srsIntervalDays <= 3650))
+        && (!('srsEaseFactor' in data) || ((data.srsEaseFactor is int || data.srsEaseFactor is float) && data.srsEaseFactor >= 1.3 && data.srsEaseFactor <= 4.0))
+        && (!('srsLapses' in data) || (data.srsLapses is int && data.srsLapses >= 0 && data.srsLapses <= 10000))
+        && (!('srsNextReviewAt' in data) || (data.srsNextReviewAt is int && data.srsNextReviewAt >= 0 && data.srsNextReviewAt <= 9999999999999))
+        && (!('srsLastReviewedAt' in data) || (data.srsLastReviewedAt is int && data.srsLastReviewedAt >= 0 && data.srsLastReviewedAt <= 9999999999999))
+        && data.createdAt is timestamp
+        && data.updatedAt is timestamp;
+    }
+
+    function isValidAchievementProgress(data, userId, badgeId) {
+      return data.keys().hasAll(['uid', 'badgeId', 'currentProgress', 'isUnlocked', 'createdAt', 'updatedAt'])
+        && data.keys().hasOnly(['uid', 'badgeId', 'currentProgress', 'isUnlocked', 'unlockedAt', 'createdAt', 'updatedAt'])
+        && data.uid is string
+        && data.uid == request.auth.uid
+        && data.uid == userId
+        && data.uid.size() >= 1 && data.uid.size() <= 128
+        && data.badgeId is string && data.badgeId == badgeId && data.badgeId.size() >= 1 && data.badgeId.size() <= 64
+        && data.currentProgress is int && data.currentProgress >= 0 && data.currentProgress <= 100000
+        && data.isUnlocked is bool
+        && (
+          (!data.isUnlocked && !('unlockedAt' in data)) ||
+          (data.isUnlocked && 'unlockedAt' in data && data.unlockedAt is int && data.unlockedAt >= 0)
+        )
+        && data.createdAt is timestamp
+        && data.updatedAt is timestamp;
+    }
+
+    function isValidPronunciationLog(data, userId) {
+      return data.keys().hasAll(['uid', 'targetText', 'spokenText', 'accuracyScore', 'createdAt'])
+        && data.keys().hasOnly(['uid', 'targetText', 'spokenText', 'accuracyScore', 'createdAt'])
+        && data.uid is string
+        && data.uid == request.auth.uid
+        && data.uid == userId
+        && data.uid.size() >= 1 && data.uid.size() <= 128
+        && data.targetText is string && data.targetText.size() >= 1 && data.targetText.size() <= 500
+        && data.spokenText is string && data.spokenText.size() >= 1 && data.spokenText.size() <= 500
+        && data.accuracyScore is int && data.accuracyScore >= 0 && data.accuracyScore <= 100
+        && data.createdAt is timestamp;
+    }
+
+    function isValidDailyActivity(data, userId, dateId) {
+      return data.keys().hasAll(['uid', 'date', 'xpEarned', 'activitiesCount', 'wordsSaved', 'createdAt', 'updatedAt'])
+        && data.keys().hasOnly(['uid', 'date', 'xpEarned', 'activitiesCount', 'wordsSaved', 'createdAt', 'updatedAt'])
+        && data.uid is string
+        && data.uid == request.auth.uid
+        && data.uid == userId
+        && data.uid.size() >= 1 && data.uid.size() <= 128
+        && data.date is string && data.date.size() == 10 && data.date == dateId && data.date.matches('^\\d{4}-\\d{2}-\\d{2}$')
+        && data.xpEarned is int && data.xpEarned >= 0 && data.xpEarned <= 50000
+        && data.activitiesCount is int && data.activitiesCount >= 0 && data.activitiesCount <= 5000
+        && data.wordsSaved is int && data.wordsSaved >= 0 && data.wordsSaved <= 5000
+        && data.createdAt is timestamp
+        && data.updatedAt is timestamp;
+    }
+
+    function isValidPaymentMethod(data, userId) {
+      return data.keys().hasAll(['uid', 'type', 'label', 'holderName', 'brand', 'isDefault', 'createdAt', 'updatedAt'])
+        && data.keys().hasOnly([
+          'uid', 'type', 'label', 'holderName', 'brand',
+          'last4', 'expiryMonth', 'expiryYear', 'pixKeyMasked',
+          'isDefault', 'createdAt', 'updatedAt'
+        ])
+        && data.uid is string
+        && data.uid == request.auth.uid
+        && data.uid == userId
+        && data.uid.size() >= 1 && data.uid.size() <= 128
+        && data.type is string && data.type in ['credit_card', 'debit_card', 'pix']
+        && data.label is string && data.label.size() >= 2 && data.label.size() <= 80
+        && data.holderName is string && data.holderName.size() >= 2 && data.holderName.size() <= 80
+        && data.brand is string && data.brand in ['visa', 'mastercard', 'amex', 'elo', 'hipercard', 'pix']
+        && data.isDefault is bool
+        && (
+          (data.type in ['credit_card', 'debit_card']
+            && data.brand in ['visa', 'mastercard', 'amex', 'elo', 'hipercard']
+            && 'last4' in data && data.last4 is string && data.last4.size() == 4 && data.last4.matches('^[0-9]{4}$')
+            && 'expiryMonth' in data && data.expiryMonth is int && data.expiryMonth >= 1 && data.expiryMonth <= 12
+            && 'expiryYear' in data && data.expiryYear is int && data.expiryYear >= 2025 && data.expiryYear <= 2050
+            && !('pixKeyMasked' in data))
+          ||
+          (data.type == 'pix'
+            && data.brand == 'pix'
+            && 'pixKeyMasked' in data && data.pixKeyMasked is string && data.pixKeyMasked.size() >= 3 && data.pixKeyMasked.size() <= 80
+            && !('last4' in data)
+            && !('expiryMonth' in data)
+            && !('expiryYear' in data))
+        )
+        && data.createdAt is timestamp
+        && data.updatedAt is timestamp;
+    }
+
+    function isValidSubscription(data, userId) {
+      return data.keys().hasAll([
+          'uid', 'userEmail', 'userName', 'planId', 'planName',
+          'priceBrlCents', 'billingCycle', 'status', 'gateway',
+          'paymentMethodId', 'paymentMethodLabel',
+          'trialDays', 'trialStartedAt', 'trialEndsAt', 'nextBillingAt',
+          'cancelAtPeriodEnd', 'createdAt', 'updatedAt'
+        ])
+        && data.keys().hasOnly([
+          'uid', 'userEmail', 'userName', 'planId', 'planName',
+          'priceBrlCents', 'billingCycle', 'status', 'gateway',
+          'paymentMethodId', 'paymentMethodLabel',
+          'trialDays', 'trialStartedAt', 'trialEndsAt', 'nextBillingAt',
+          'gatewaySubscriptionId', 'cancelAtPeriodEnd', 'createdAt', 'updatedAt'
+        ])
+        && data.uid is string && data.uid == userId && data.uid.size() >= 1 && data.uid.size() <= 128
+        && data.userEmail is string && data.userEmail.size() >= 3 && data.userEmail.size() <= 254
+        && data.userName is string && data.userName.size() >= 1 && data.userName.size() <= 120
+        && data.planId is string && data.planId in ['essencial_mensal', 'pro_mensal', 'pro_anual']
+        && data.planName is string && data.planName.size() >= 2 && data.planName.size() <= 80
+        && data.priceBrlCents is int
+        && (
+          (data.planId == 'essencial_mensal' && data.priceBrlCents == 3990 && data.billingCycle == 'monthly') ||
+          (data.planId == 'pro_mensal' && data.priceBrlCents == 5990 && data.billingCycle == 'monthly') ||
+          (data.planId == 'pro_anual' && data.priceBrlCents == 47880 && data.billingCycle == 'annual')
+        )
+        && data.status is string && data.status in ['trialing', 'active', 'past_due', 'canceled']
+        && data.gateway is string && data.gateway in ['mercadopago', 'stripe']
+        && data.paymentMethodId is string && isValidId(data.paymentMethodId) && data.paymentMethodId.size() <= 64
+        && data.paymentMethodLabel is string && data.paymentMethodLabel.size() >= 2 && data.paymentMethodLabel.size() <= 80
+        && data.trialDays is int && data.trialDays == 7
+        && data.trialStartedAt is int && data.trialStartedAt > 0
+        && data.trialEndsAt is int && data.trialEndsAt >= data.trialStartedAt
+        && data.nextBillingAt is int && data.nextBillingAt >= data.trialStartedAt
+        && (!('gatewaySubscriptionId' in data) || (data.gatewaySubscriptionId is string && data.gatewaySubscriptionId.size() <= 128))
+        && data.cancelAtPeriodEnd is bool
+        && data.createdAt is timestamp
+        && data.updatedAt is timestamp;
+    }
+
+    function isValidLgpdConsent(data, userId) {
+      return data.keys().hasAll([
+          'uid', 'acceptedTerms', 'acceptedPrivacy', 'marketingOptIn',
+          'termsVersion', 'privacyVersion', 'acceptedAt', 'createdAt', 'updatedAt'
+        ])
+        && data.keys().hasOnly([
+          'uid', 'userEmail', 'acceptedTerms', 'acceptedPrivacy', 'marketingOptIn',
+          'termsVersion', 'privacyVersion', 'acceptedAt', 'revokedAt', 'createdAt', 'updatedAt'
+        ])
+        && data.uid is string
+        && data.uid == request.auth.uid
+        && data.uid == userId
+        && data.uid.size() >= 1 && data.uid.size() <= 128
+        && (!('userEmail' in data) || (data.userEmail is string && data.userEmail.size() >= 3 && data.userEmail.size() <= 254))
+        && data.acceptedTerms is bool
+        && data.acceptedPrivacy is bool
+        && data.marketingOptIn is bool
+        && data.termsVersion is string && data.termsVersion.size() >= 1 && data.termsVersion.size() <= 20
+        && data.privacyVersion is string && data.privacyVersion.size() >= 1 && data.privacyVersion.size() <= 20
+        && data.acceptedAt is int && data.acceptedAt > 0
+        && (!('revokedAt' in data) || (data.revokedAt is int && data.revokedAt > 0))
+        && data.createdAt is timestamp
+        && data.updatedAt is timestamp;
+    }
+
+    function isValidPushSubscription(data, userId, deviceId) {
+      return data.keys().hasAll([
+          'uid', 'deviceId', 'fcmToken', 'permissionStatus',
+          'enabled', 'reminderHour', 'streakAtRisk', 'createdAt', 'updatedAt'
+        ])
+        && data.keys().hasOnly([
+          'uid', 'deviceId', 'fcmToken', 'permissionStatus',
+          'enabled', 'reminderHour', 'streakAtRisk',
+          'lastPracticedDate', 'lastNotifiedDate', 'createdAt', 'updatedAt'
+        ])
+        && data.uid is string
+        && data.uid == request.auth.uid
+        && data.uid == userId
+        && data.uid.size() >= 1 && data.uid.size() <= 128
+        && data.deviceId is string && data.deviceId == deviceId && isValidId(data.deviceId) && data.deviceId.size() <= 64
+        && data.fcmToken is string && data.fcmToken.size() >= 8 && data.fcmToken.size() <= 512
+        && data.permissionStatus is string && data.permissionStatus in ['default', 'granted', 'denied']
+        && data.enabled is bool
+        && data.reminderHour is int && data.reminderHour >= 0 && data.reminderHour <= 23
+        && data.streakAtRisk is bool
+        && (!('lastPracticedDate' in data) || (data.lastPracticedDate is string && data.lastPracticedDate.size() == 10 && data.lastPracticedDate.matches('^\\d{4}-\\d{2}-\\d{2}$')))
+        && (!('lastNotifiedDate' in data) || (data.lastNotifiedDate is string && data.lastNotifiedDate.size() == 10 && data.lastNotifiedDate.matches('^\\d{4}-\\d{2}-\\d{2}$')))
+        && data.createdAt is timestamp
+        && data.updatedAt is timestamp;
+    }
+
+    // --- Collection Rules ---
+    match /admins/{adminId} {
+      allow get: if isValidId(adminId) && (isOwner(adminId) || isAdmin());
+      allow list: if false;
+      allow write: if false;
+    }
+
+    match /subscriptions/{userId} {
+      allow get: if isValidId(userId) && (isOwner(userId) || isAdmin());
+      allow list: if isAdmin() && resource.data.uid is string;
+
+      allow create: if isSignedIn()
+        && isValidId(userId)
+        && (isOwner(userId) || isAdmin())
+        && isValidSubscription(incoming(), userId)
+        && incoming().createdAt == request.time
+        && incoming().updatedAt == request.time
+        && (
+          isAdmin() ||
+          (
+            incoming().uid == request.auth.uid &&
+            incoming().status == 'trialing' &&
+            exists(/databases/$(database)/documents/users/$(userId)/paymentMethods/$(incoming().paymentMethodId))
+          )
+        );
+
+      allow update: if isSignedIn()
+        && isValidId(userId)
+        && (isOwner(userId) || isAdmin())
+        && isValidSubscription(incoming(), userId)
+        && incoming().uid == existing().uid
+        && incoming().createdAt == existing().createdAt
+        && incoming().updatedAt == request.time
+        && (
+          isAdmin() ||
+          (
+            incoming().diff(existing()).affectedKeys().hasOnly(['cancelAtPeriodEnd', 'status', 'updatedAt']) &&
+            incoming().status in ['trialing', 'active', 'canceled']
+          ) ||
+          (
+            incoming().diff(existing()).affectedKeys().hasOnly([
+              'planId', 'planName', 'priceBrlCents', 'billingCycle',
+              'paymentMethodId', 'paymentMethodLabel',
+              'cancelAtPeriodEnd', 'status', 'updatedAt'
+            ]) &&
+            incoming().status in ['trialing', 'active'] &&
+            exists(/databases/$(database)/documents/users/$(userId)/paymentMethods/$(incoming().paymentMethodId))
+          )
+        );
+
+      allow delete: if false;
+    }
+
+    match /lgpdConsents/{userId} {
+      allow get: if isValidId(userId) && (isOwner(userId) || isAdmin());
+      allow list: if isAdmin() && resource.data.uid is string;
+
+      allow create: if isSignedIn()
+        && isValidId(userId)
+        && isOwner(userId)
+        && isValidLgpdConsent(incoming(), userId)
+        && incoming().acceptedTerms == true
+        && incoming().acceptedPrivacy == true
+        && incoming().createdAt == request.time
+        && incoming().updatedAt == request.time;
+
+      allow update: if isSignedIn()
+        && isValidId(userId)
+        && isOwner(userId)
+        && isValidLgpdConsent(incoming(), userId)
+        && incoming().uid == existing().uid
+        && incoming().createdAt == existing().createdAt
+        && incoming().updatedAt == request.time
+        && incoming().diff(existing()).affectedKeys().hasOnly([
+          'userEmail', 'acceptedTerms', 'acceptedPrivacy', 'marketingOptIn',
+          'termsVersion', 'privacyVersion', 'acceptedAt', 'revokedAt', 'updatedAt'
+        ]);
+
+      allow delete: if false;
+    }
+
+    match /users/{userId} {
+      allow get: if isValidId(userId) && (isOwner(userId) || isAdmin());
+      allow list: if isAdmin() && resource.data.uid is string;
+
+      allow create: if isSignedIn()
+        && isValidId(userId)
+        && isOwner(userId)
+        && isValidUserProgress(incoming(), userId)
+        && incoming().xp <= 50000
+        && incoming().streak <= 365
+        && incoming().createdAt == request.time
+        && incoming().updatedAt == request.time;
+
+      allow update: if isSignedIn()
+        && isValidId(userId)
+        && isOwner(userId)
+        && isValidUserProgress(incoming(), userId)
+        && incoming().uid == existing().uid
+        && incoming().createdAt == existing().createdAt
+        && incoming().updatedAt == request.time
+        && (
+          // Action: Update learning preferences / audio / theme settings only
+          incoming().diff(existing()).affectedKeys().hasOnly(['displayName', 'userLevel', 'focus', 'isAudioMuted', 'speechRate', 'theme', 'updatedAt']) ||
+          // Action: Update XP or streak progress (bounded delta per sync)
+          (incoming().diff(existing()).affectedKeys().hasOnly(['xp', 'streak', 'updatedAt'])
+            && incoming().xp >= existing().xp
+            && (incoming().xp - existing().xp) <= 10000
+            && incoming().streak <= (existing().streak + 30)) ||
+          // Action: Combined settings + progress sync (bounded delta per sync)
+          (incoming().diff(existing()).affectedKeys().hasOnly(['displayName', 'userLevel', 'focus', 'xp', 'streak', 'isAudioMuted', 'speechRate', 'theme', 'updatedAt'])
+            && incoming().xp >= existing().xp
+            && (incoming().xp - existing().xp) <= 10000
+            && incoming().streak <= (existing().streak + 30))
+        );
+
+      allow delete: if false;
+
+      // Isolated Private PII Subcollection
+      match /private/{docId} {
+        allow get: if isValidId(userId) && docId == 'info' && isOwner(userId);
+        allow list: if false;
+
+        allow create: if isSignedIn()
+          && isValidId(userId)
+          && docId == 'info'
+          && isOwner(userId)
+          && isValidUserPrivateInfo(incoming(), userId)
+          && incoming().createdAt == request.time
+          && incoming().updatedAt == request.time
+          && hasUserParent(userId);
+
+        allow update: if isSignedIn()
+          && isValidId(userId)
+          && docId == 'info'
+          && isOwner(userId)
+          && isValidUserPrivateInfo(incoming(), userId)
+          && incoming().uid == existing().uid
+          && incoming().createdAt == existing().createdAt
+          && incoming().updatedAt == request.time
+          && incoming().diff(existing()).affectedKeys().hasOnly(['email', 'photoURL', 'updatedAt']);
+
+        allow delete: if false;
+      }
+
+      // Personal Vocabulary Notebook Subcollection
+      match /vocabulary/{wordId} {
+        allow get: if isValidId(userId) && isValidId(wordId) && isOwner(userId);
+        allow list: if isValidId(userId) && isOwner(userId) && resource.data.uid == request.auth.uid;
+
+        allow create: if isSignedIn()
+          && isValidId(userId)
+          && isValidId(wordId)
+          && isOwner(userId)
+          && isValidVocabularyEntry(incoming(), userId)
+          && incoming().createdAt == request.time
+          && incoming().updatedAt == request.time
+          && hasUserParent(userId);
+
+        allow update: if isSignedIn()
+          && isValidId(userId)
+          && isValidId(wordId)
+          && isOwner(userId)
+          && isValidVocabularyEntry(incoming(), userId)
+          && incoming().uid == existing().uid
+          && incoming().createdAt == existing().createdAt
+          && incoming().updatedAt == request.time
+          && (
+            incoming().diff(existing()).affectedKeys().hasOnly(['term', 'phonetic', 'meaning', 'example', 'category', 'updatedAt']) ||
+            incoming().diff(existing()).affectedKeys().hasOnly([
+              'srsRepetitions', 'srsIntervalDays', 'srsEaseFactor', 'srsLapses',
+              'srsNextReviewAt', 'srsLastReviewedAt', 'updatedAt'
+            ])
+          );
+
+        allow delete: if isValidId(userId) && isValidId(wordId) && isOwner(userId);
+      }
+
+      // User Achievement Milestones Subcollection
+      match /achievements/{badgeId} {
+        allow get: if isValidId(userId) && isValidId(badgeId) && isOwner(userId);
+        allow list: if isValidId(userId) && isOwner(userId) && resource.data.uid == request.auth.uid;
+
+        allow create: if isSignedIn()
+          && isValidId(userId)
+          && isValidId(badgeId)
+          && isOwner(userId)
+          && isValidAchievementProgress(incoming(), userId, badgeId)
+          && incoming().createdAt == request.time
+          && incoming().updatedAt == request.time
+          && hasUserParent(userId);
+
+        allow update: if isSignedIn()
+          && isValidId(userId)
+          && isValidId(badgeId)
+          && isOwner(userId)
+          && isValidAchievementProgress(incoming(), userId, badgeId)
+          && incoming().uid == existing().uid
+          && incoming().badgeId == existing().badgeId
+          && incoming().createdAt == existing().createdAt
+          && incoming().updatedAt == request.time
+          && incoming().currentProgress >= existing().currentProgress
+          && (
+            // Terminal state lock: once unlocked, cannot un-unlock or alter unlockedAt
+            (existing().isUnlocked == true
+              && incoming().isUnlocked == true
+              && incoming().unlockedAt == existing().unlockedAt
+              && incoming().diff(existing()).affectedKeys().hasOnly(['currentProgress', 'updatedAt']))
+            ||
+            // Transitioning or advancing progress while locked
+            (existing().isUnlocked == false
+              && incoming().diff(existing()).affectedKeys().hasOnly(['currentProgress', 'isUnlocked', 'unlockedAt', 'updatedAt']))
+          );
+
+        allow delete: if false;
+      }
+
+      // Real-Time Pronunciation Practice Logs
+      match /pronunciationLogs/{logId} {
+        allow get: if isValidId(userId) && isValidId(logId) && isOwner(userId);
+        allow list: if isValidId(userId) && isOwner(userId) && resource.data.uid == request.auth.uid;
+
+        allow create: if isSignedIn()
+          && isValidId(userId)
+          && isValidId(logId)
+          && isOwner(userId)
+          && isValidPronunciationLog(incoming(), userId)
+          && incoming().createdAt == request.time
+          && hasUserParent(userId);
+
+        allow update: if false;
+        allow delete: if isValidId(userId) && isValidId(logId) && isOwner(userId);
+      }
+
+      // Daily Activity & XP Frequency Logs (Last 30+ Days)
+      match /dailyActivity/{dateId} {
+        allow get: if isValidId(userId) && isValidId(dateId) && dateId.matches('^\\d{4}-\\d{2}-\\d{2}$') && isOwner(userId);
+        allow list: if isValidId(userId) && isOwner(userId) && resource.data.uid == request.auth.uid;
+
+        allow create: if isSignedIn()
+          && isValidId(userId)
+          && isValidId(dateId)
+          && isOwner(userId)
+          && isValidDailyActivity(incoming(), userId, dateId)
+          && incoming().createdAt == request.time
+          && incoming().updatedAt == request.time
+          && hasUserParent(userId);
+
+        allow update: if isSignedIn()
+          && isValidId(userId)
+          && isValidId(dateId)
+          && isOwner(userId)
+          && isValidDailyActivity(incoming(), userId, dateId)
+          && incoming().uid == existing().uid
+          && incoming().date == existing().date
+          && incoming().createdAt == existing().createdAt
+          && incoming().updatedAt == request.time
+          && incoming().xpEarned >= existing().xpEarned
+          && incoming().activitiesCount >= existing().activitiesCount
+          && incoming().wordsSaved >= existing().wordsSaved
+          && incoming().diff(existing()).affectedKeys().hasOnly(['xpEarned', 'activitiesCount', 'wordsSaved', 'updatedAt']);
+
+        allow delete: if false;
+      }
+
+      // Masked Payment Methods Subcollection (PCI-safe metadata only)
+      match /paymentMethods/{methodId} {
+        allow get: if isValidId(userId) && isValidId(methodId) && isOwner(userId);
+        allow list: if isValidId(userId) && isOwner(userId) && resource.data.uid == request.auth.uid;
+
+        allow create: if isSignedIn()
+          && isValidId(userId)
+          && isValidId(methodId)
+          && isOwner(userId)
+          && isValidPaymentMethod(incoming(), userId)
+          && incoming().createdAt == request.time
+          && incoming().updatedAt == request.time
+          && hasUserParent(userId);
+
+        allow update: if isSignedIn()
+          && isValidId(userId)
+          && isValidId(methodId)
+          && isOwner(userId)
+          && isValidPaymentMethod(incoming(), userId)
+          && incoming().uid == existing().uid
+          && incoming().type == existing().type
+          && incoming().createdAt == existing().createdAt
+          && incoming().updatedAt == request.time
+          && incoming().diff(existing()).affectedKeys().hasOnly(['isDefault', 'label', 'updatedAt']);
+
+        allow delete: if isValidId(userId) && isValidId(methodId) && isOwner(userId);
+      }
+
+      // Firebase Cloud Messaging (FCM) Browser Push Subscriptions
+      match /pushSubscriptions/{deviceId} {
+        allow get: if isValidId(userId) && isValidId(deviceId) && isOwner(userId);
+        allow list: if isValidId(userId) && isOwner(userId) && resource.data.uid == request.auth.uid;
+
+        allow create: if isSignedIn()
+          && isValidId(userId)
+          && isValidId(deviceId)
+          && isOwner(userId)
+          && isValidPushSubscription(incoming(), userId, deviceId)
+          && incoming().createdAt == request.time
+          && incoming().updatedAt == request.time
+          && hasUserParent(userId);
+
+        allow update: if isSignedIn()
+          && isValidId(userId)
+          && isValidId(deviceId)
+          && isOwner(userId)
+          && isValidPushSubscription(incoming(), userId, deviceId)
+          && incoming().uid == existing().uid
+          && incoming().deviceId == existing().deviceId
+          && incoming().createdAt == existing().createdAt
+          && incoming().updatedAt == request.time
+          && incoming().diff(existing()).affectedKeys().hasOnly([
+            'fcmToken', 'permissionStatus', 'enabled', 'reminderHour',
+            'streakAtRisk', 'lastPracticedDate', 'lastNotifiedDate', 'updatedAt'
+          ]);
+
+        allow delete: if isValidId(userId) && isValidId(deviceId) && isOwner(userId);
+      }
+    }
+  }
+}

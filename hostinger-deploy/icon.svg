@@ -1,0 +1,25 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" fill="none">
+  <rect width="512" height="512" rx="112" fill="#090D16" />
+  <rect x="28" y="28" width="456" height="456" rx="92" stroke="#1E293B" stroke-width="6" />
+  <defs>
+    <linearGradient id="barGrad" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#FCD34D" />
+      <stop offset="100%" stop-color="#6366F1" />
+    </linearGradient>
+    <radialGradient id="sparkGrad" cx="50%" cy="50%" r="50%">
+      <stop offset="0%" stop-color="#FDE68A" />
+      <stop offset="55%" stop-color="#818CF8" />
+      <stop offset="100%" stop-color="#4F46E5" stop-opacity="0.15" />
+    </radialGradient>
+  </defs>
+  <rect x="132" y="196" width="22" height="104" rx="11" fill="url(#barGrad)" />
+  <rect x="176" y="156" width="22" height="144" rx="11" fill="url(#barGrad)" />
+  <rect x="220" y="128" width="22" height="162" rx="11" fill="url(#barGrad)" />
+  <rect x="268" y="106" width="24" height="176" rx="12" fill="url(#barGrad)" />
+  <rect x="316" y="144" width="22" height="148" rx="11" fill="url(#barGrad)" />
+  <rect x="360" y="186" width="22" height="114" rx="11" fill="url(#barGrad)" />
+  <path
+    d="M256 236 L278 308 L350 330 L278 352 L256 424 L234 352 L162 330 L234 308 Z"
+    fill="url(#sparkGrad)"
+  />
+</svg>
