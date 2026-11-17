@@ -329,9 +329,9 @@
         },
         "type": {
           "type": "string",
-          "enum": ["credit_card", "debit_card", "pix"],
+          "enum": ["credit_card"],
           "maxLength": 20,
-          "description": "Modalidade de pagamento."
+          "description": "Modalidade de pagamento (somente cartão de crédito)."
         },
         "label": {
           "type": "string",
@@ -347,9 +347,9 @@
         },
         "brand": {
           "type": "string",
-          "enum": ["visa", "mastercard", "amex", "elo", "hipercard", "pix"],
+          "enum": ["visa", "mastercard", "amex", "elo", "hipercard"],
           "maxLength": 20,
-          "description": "Bandeira do cartão ou PIX."
+          "description": "Bandeira do cartão de crédito."
         },
         "last4": {
           "type": "string",
@@ -366,12 +366,6 @@
           "type": "integer",
           "description": "Ano de validade do cartão (ex: 2029)."
         },
-        "pixKeyMasked": {
-          "type": "string",
-          "minLength": 3,
-          "maxLength": 80,
-          "description": "Chave PIX mascarada para exibição."
-        },
         "isDefault": {
           "type": "boolean",
           "description": "Indica se é o método de pagamento principal."
@@ -387,7 +381,7 @@
           "description": "Timestamp da última atualização."
         }
       },
-      "required": ["uid", "type", "label", "holderName", "brand", "isDefault", "createdAt", "updatedAt"]
+      "required": ["uid", "type", "label", "holderName", "brand", "last4", "expiryMonth", "expiryYear", "isDefault", "createdAt", "updatedAt"]
     },
     "UserSubscription": {
       "title": "UserSubscription",

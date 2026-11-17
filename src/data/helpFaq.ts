@@ -75,18 +75,18 @@ export const HELP_FAQ_ITEMS: HelpFaqItem[] = [
   {
     id: 'faq-trial-7-dias',
     category: 'planos_mercadopago',
-    question: 'Como funciona o teste grátis de 7 dias com cadastro de meio de pagamento?',
+    question: 'Como funciona o teste grátis de 7 dias com cadastro de cartão de crédito?',
     answer:
-      'Ao escolher um plano (Essencial Mensal R$ 39,90, Pro Mensal R$ 59,90 ou Pro Anual R$ 478,80), você cadastra um cartão ou chave PIX para validar sua assinatura com cobrança de R$ 0,00 no ato. Você tem 7 dias completos para usar tudo; se cancelar antes do 7º dia em Configurações > Planos, nada será cobrado.',
-    tags: ['7 dias grátis', 'trial', 'preço', 'planos', 'cancelamento'],
+      'Ao escolher um plano (Essencial Mensal R$ 39,90, Pro Mensal R$ 59,90 ou Pro Anual R$ 478,80), você cadastra um Cartão de Crédito válido. No ato do cadastro é feita apenas uma validação de segurança e pré-autorização temporária (cancelada imediatamente, sem cobrança efetiva) para confirmar cartão ativo e com limite. Você tem 7 dias completos para usar tudo; se cancelar antes do 7º dia em Configurações > Planos, nada será cobrado.',
+    tags: ['7 dias grátis', 'trial', 'preço', 'planos', 'cancelamento', 'cartão de crédito'],
   },
   {
     id: 'faq-mercadopago-seguranca',
     category: 'planos_mercadopago',
-    question: 'Meus dados de cartão ficam seguros? Como o Mercado Pago processa?',
+    question: 'Meus dados de cartão ficam seguros? Como o Mercado Pago valida e processa?',
     answer:
-      'Sim. O Purpose Talk nunca armazena o número completo do cartão nem o código de segurança (CVV) em seu banco de dados — mantemos apenas metadados mascarados (bandeira e 4 últimos dígitos). O processamento real e a cobrança recorrente após os 7 dias são intermediados diretamente pelo Mercado Pago (com suporte a PIX e cartão em BRL) ou Stripe.',
-    tags: ['mercado pago', 'segurança', 'cvv', 'pix', 'cartão'],
+      'Sim. O Purpose Talk nunca armazena o número completo do cartão, CPF nem o código de segurança (CVV) em seu banco de dados — mantemos apenas metadados mascarados (bandeira e 4 últimos dígitos). A tokenização, validação antifraude, verificação de limite por pré-autorização (R$ 0,00 efetivo) e a cobrança recorrente após os 7 dias são intermediadas diretamente pelo Mercado Pago.',
+    tags: ['mercado pago', 'segurança', 'cvv', 'cartão de crédito', 'validação'],
   },
   {
     id: 'faq-criador-recebimento',

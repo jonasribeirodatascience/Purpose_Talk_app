@@ -150,13 +150,11 @@ function sanitizeTheme(theme?: string): ThemeMode {
   return theme === 'light' ? 'light' : 'dark';
 }
 
-function sanitizePaymentType(type?: string): PaymentMethodType {
-  if (type === 'debit_card' || type === 'pix') return type;
+function sanitizePaymentType(_type?: string): PaymentMethodType {
   return 'credit_card';
 }
 
-function sanitizeCardBrand(brand?: string, type?: PaymentMethodType): CardBrand {
-  if (type === 'pix') return 'pix';
+function sanitizeCardBrand(brand?: string, _type?: PaymentMethodType): CardBrand {
   if (
     brand === 'visa' ||
     brand === 'mastercard' ||
@@ -663,25 +661,20 @@ export async function savePaymentMethodToCloud(
   const holderName = method.holderName.trim().slice(0, 80) || 'Titular';
   const label = method.label.trim().slice(0, 80) || 'Forma de pagamento';
 
+  const cleanLast4 = (method.last4 || '0000').replace(/\D/g, '').slice(-4).padStart(4, '0');
   const payload: Record<string, unknown> = {
     uid,
-    type: safeType,
+    type: 'credit_card',
     label,
     holderName,
     brand: safeBrand,
+    last4: cleanLast4,
+    expiryMonth: clampInt(method.expiryMonth ?? 12, 1, 12),
+    expiryYear: clampInt(method.expiryYear ?? 2029, 2025, 2050),
     isDefault: Boolean(method.isDefault),
     createdAt: serverTimestamp(),
     updatedAt: serverTimestamp(),
   };
-
-  if (safeType === 'pix') {
-    payload.pixKeyMasked = (method.pixKeyMasked || '***').trim().slice(0, 80);
-  } else {
-    const cleanLast4 = (method.last4 || '0000').replace(/\D/g, '').slice(-4).padStart(4, '0');
-    payload.last4 = cleanLast4;
-    payload.expiryMonth = clampInt(method.expiryMonth ?? 12, 1, 12);
-    payload.expiryYear = clampInt(method.expiryYear ?? 2029, 2025, 2050);
-  }
 
   try {
     if (method.isDefault) {

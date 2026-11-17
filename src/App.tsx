@@ -22,6 +22,8 @@ import { LegalLgpdModal, LegalTabId } from './components/LegalLgpdModal';
 import { LgpdConsentBanner } from './components/LgpdConsentBanner';
 import { SettingsScreen } from './components/SettingsScreen';
 import { MarketingLandingPage } from './components/MarketingLandingPage';
+import { LoginScreen } from './components/LoginScreen';
+import { SubscriptionPlansModal } from './components/SubscriptionPlansModal';
 import { HelpCenterModal } from './components/HelpCenterModal';
 import { OfflineIndicator } from './components/OfflineIndicator';
 import { CookieConsentRecord, LearningFocus, LgpdConsentRecord, PaymentMethodRecord, PushNotificationPrefs, ThemeMode, UserLevel, UserSubscriptionRecord, VocabularyItem, AchievementBadge, DailyActivityRecord } from './types';
@@ -60,22 +62,17 @@ import {
 } from './services/fcmNotifications';
 
 function AppContent() {
-  const { user, authReady } = useFirebase();
+  const { user, authReady, signOutUser } = useFirebase();
   const isCreatorAdmin = Boolean(
     user?.email && user.email.toLowerCase() === CREATOR_ADMIN_EMAIL.toLowerCase() && user.emailVerified
   );
   const [surfaceMode, setSurfaceMode] = useState<'landing' | 'app'>(() => {
-    if (typeof window === 'undefined') return 'landing';
+    if (typeof window === 'undefined') return 'app';
     const params = new URLSearchParams(window.location.search);
-    if (
-      params.get('source') === 'pwa' ||
-      params.get('page') === 'app' ||
-      params.has('tab') ||
-      params.has('billing')
-    ) {
-      return 'app';
+    if (params.get('page') === 'landing') {
+      return 'landing';
     }
-    return 'landing';
+    return 'app';
   });
 
   const [currentTab, setCurrentTab] = useState<AppTabId>(() => {
@@ -98,6 +95,12 @@ function AppContent() {
       window.scrollTo({ top: 0, behavior: 'smooth' });
     }
   };
+
+  useEffect(() => {
+    if (user) {
+      setSurfaceMode('app');
+    }
+  }, [user]);
 
   const handleOpenLanding = () => {
     setSurfaceMode('landing');
@@ -207,6 +210,9 @@ function AppContent() {
 
   const [unlockedToastBadge, setUnlockedToastBadge] = useState<AchievementBadge | null>(null);
   const [cloudBootstrappedUid, setCloudBootstrappedUid] = useState<string | null>(null);
+  const [subscriptionCloudLoadedUid, setSubscriptionCloudLoadedUid] = useState<string | null>(null);
+  const [holdingPlanConfirmation, setHoldingPlanConfirmation] = useState<boolean>(false);
+  const [creatorBypassPaywall, setCreatorBypassPaywall] = useState<boolean>(false);
   const isApplyingCloudRef = useRef<boolean>(false);
 
   const [dailyActivity, setDailyActivity] = useState<Record<string, DailyActivityRecord>>(() => {
@@ -424,9 +430,13 @@ function AppContent() {
     if (!authReady) return;
     if (!user) {
       setCloudBootstrappedUid(null);
+      setSubscriptionCloudLoadedUid(null);
+      setHoldingPlanConfirmation(false);
+      setCreatorBypassPaywall(false);
       return;
     }
 
+    setSubscription((prev) => (prev && prev.uid === user.uid ? prev : null));
     let isCancelled = false;
     let unsubscribeWorkspace: (() => void) | null = null;
 
@@ -523,9 +533,8 @@ function AppContent() {
             setPaymentMethods(cloudMethods);
           },
           onSubscriptionUpdate: (cloudSub) => {
-            if (cloudSub) {
-              setSubscription(cloudSub);
-            }
+            setSubscriptionCloudLoadedUid(user.uid);
+            setSubscription(cloudSub);
           },
           onLgpdConsentUpdate: (cloudConsent) => {
             if (cloudConsent) {
@@ -542,6 +551,10 @@ function AppContent() {
         });
       } catch (err) {
         console.error('Erro ao inicializar Firestore do usuário:', err);
+        if (!isCancelled) {
+          setCloudBootstrappedUid(user.uid);
+          setSubscriptionCloudLoadedUid(user.uid);
+        }
       }
     };
 
@@ -858,7 +871,15 @@ function AppContent() {
     }
   };
 
+  const hasSubscriptionAccess = Boolean(
+    user &&
+      subscription &&
+      subscription.uid === user.uid &&
+      (subscription.status === 'trialing' || subscription.status === 'active')
+  );
+
   const handleActivateSubscription = async (sub: UserSubscriptionRecord): Promise<void> => {
+    const wasMissingAccess = !hasSubscriptionAccess;
     const normalizedSub: UserSubscriptionRecord = user
       ? {
           ...sub,
@@ -867,6 +888,9 @@ function AppContent() {
           userName: user.displayName || sub.userName,
         }
       : sub;
+    if (wasMissingAccess) {
+      setHoldingPlanConfirmation(true);
+    }
     setSubscription(normalizedSub);
     if (user && cloudBootstrappedUid === user.uid) {
       await saveSubscriptionToCloud(user.uid, normalizedSub);
@@ -1095,9 +1119,36 @@ function AppContent() {
     return { mode: data?.mode || 'client_sw_ready', title, body };
   };
 
+  const isLoginGateActive = authReady && !user && surfaceMode !== 'landing';
+  const isCloudWorkspaceLoading = Boolean(
+    authReady &&
+      user &&
+      surfaceMode !== 'landing' &&
+      (cloudBootstrappedUid !== user.uid || subscriptionCloudLoadedUid !== user.uid)
+  );
+  const isSubscriptionGateActive = Boolean(
+    authReady &&
+      user &&
+      surfaceMode !== 'landing' &&
+      !isCloudWorkspaceLoading &&
+      !creatorBypassPaywall &&
+      (!hasSubscriptionAccess || holdingPlanConfirmation)
+  );
+
   return (
     <div className="min-h-screen bg-slate-950 text-slate-100 flex flex-col selection:bg-indigo-500 selection:text-white">
-      {surfaceMode === 'landing' ? (
+      {!authReady ? (
+        <div className="min-h-screen flex flex-col items-center justify-center gap-4 px-6 bg-slate-950 text-slate-100">
+          <div className="text-2xl font-extrabold tracking-tight text-white">
+            Purpose{' '}
+            <span className="text-transparent bg-clip-text bg-gradient-to-r from-indigo-400 via-purple-400 to-amber-300">
+              Talk
+            </span>
+          </div>
+          <div className="w-7 h-7 rounded-full border-2 border-indigo-500 border-t-transparent animate-spin" />
+          <p className="text-xs text-slate-400">Verificando sua sessão...</p>
+        </div>
+      ) : surfaceMode === 'landing' ? (
         <MarketingLandingPage
           theme={theme}
           onToggleTheme={handleToggleTheme}
@@ -1105,6 +1156,48 @@ function AppContent() {
           onOpenHelp={() => setIsHelpModalOpen(true)}
           onOpenLegal={handleOpenLegal}
           isAuthenticated={Boolean(user)}
+        />
+      ) : isLoginGateActive ? (
+        <LoginScreen
+          theme={theme}
+          onToggleTheme={handleToggleTheme}
+          onOpenLegal={handleOpenLegal}
+          onOpenHelp={() => setIsHelpModalOpen(true)}
+          onViewLanding={handleOpenLanding}
+        />
+      ) : isCloudWorkspaceLoading ? (
+        <div className="min-h-screen flex flex-col items-center justify-center gap-4 px-6 bg-slate-950 text-slate-100">
+          <div className="text-2xl font-extrabold tracking-tight text-white">
+            Purpose{' '}
+            <span className="text-transparent bg-clip-text bg-gradient-to-r from-indigo-400 via-purple-400 to-amber-300">
+              Talk
+            </span>
+          </div>
+          <div className="w-7 h-7 rounded-full border-2 border-indigo-500 border-t-transparent animate-spin" />
+          <p className="text-xs text-slate-400">Carregando sua assinatura e progresso...</p>
+        </div>
+      ) : isSubscriptionGateActive ? (
+        <SubscriptionPlansModal
+          isOpen={true}
+          onClose={() => {}}
+          paymentMethods={paymentMethods}
+          subscription={subscription}
+          onAddPaymentMethod={handleAddPaymentMethod}
+          onActivateSubscription={handleActivateSubscription}
+          onUpdateSubscription={handleUpdateSubscription}
+          lgpdAccepted={isLgpdConsentActive}
+          onOpenLegal={handleOpenLegal}
+          onAcceptLgpd={handleAcceptQuickLgpd}
+          isRequiredOnboarding={true}
+          userEmail={user?.email}
+          userName={user?.displayName}
+          onSignOut={signOutUser}
+          onContinueToApp={() => setHoldingPlanConfirmation(false)}
+          isCreatorAdmin={isCreatorAdmin}
+          onBypassAsCreator={() => {
+            setHoldingPlanConfirmation(false);
+            setCreatorBypassPaywall(true);
+          }}
         />
       ) : currentTab === 'settings' ? (
         <SettingsScreen
@@ -1397,7 +1490,7 @@ function AppContent() {
       <OfflineIndicator />
 
       {/* Compact Cookie & LGPD Consent Banner when acceptance is pending */}
-      {!isCookieBannerDismissed && (
+      {!isCookieBannerDismissed && !isLoginGateActive && !isSubscriptionGateActive && !isCloudWorkspaceLoading && (
         <LgpdConsentBanner
           onOpenLegal={handleOpenLegal}
           onAcceptAll={handleAcceptQuickLgpd}

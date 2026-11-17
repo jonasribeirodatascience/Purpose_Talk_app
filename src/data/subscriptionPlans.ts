@@ -67,8 +67,8 @@ export const GATEWAY_RECOMMENDATIONS = [
     name: 'Mercado Pago (Recomendado Brasil)',
     recommended: true,
     summaryPt:
-      'Melhor opção para operar no Brasil: suporta 7 dias grátis (Preapproval), PIX automático, Cartão de Crédito/Débito sem IOF e repasse direto para sua conta Mercado Pago, conta bancária ou chave PIX (CPF/CNPJ).',
-    feesHintPt: 'PIX ~0,99% · Cartão à vista/recorrente ~3,98% a 4,98%',
+      'Melhor opção para operar no Brasil: suporta 7 dias grátis (Preapproval), Cartão de Crédito com validação de BIN e pré-autorização automática para evitar cartões sem saldo/limite, além de repasse direto para sua conta Mercado Pago ou transferência via PIX.',
+    feesHintPt: 'Cartão de Crédito recorrente ~3,98% a 4,98% · Pré-validação sem custo após cancelamento imediato',
     payoutFlowPt: 'Saldo cai na sua conta Mercado Pago e pode ser transferido via PIX na hora para qualquer banco.',
   },
   {

@@ -641,18 +641,22 @@ router.get('/billing/config', (req: Request, res: Response) => {
         configured: mpConfigured,
         webhookSecretConfigured: mpWebhookSecretConfigured,
         publicKeyConfigured: mpPublicKeyConfigured,
-        label: 'Mercado Pago (Recomendado Brasil)',
-        supportsPix: true,
+        label: 'Mercado Pago (Somente Cartão de Crédito)',
+        supportsPix: false,
+        supportsDebitCard: false,
         supportsCards: true,
+        supportsCreditCardOnly: true,
         supports7DayTrial: true,
-        payoutDestination: 'Conta Mercado Pago / Chave PIX ou Conta Bancária vinculada no painel do criador',
+        payoutDestination: 'Conta Mercado Pago / Conta Bancária ou chave PIX vinculada no painel do criador',
         webhookUrl: `${appUrl}/api/billing/webhook/mercadopago`,
       },
       stripe: {
         configured: stripeConfigured,
         label: 'Stripe Billing (Global)',
         supportsPix: false,
+        supportsDebitCard: false,
         supportsCards: true,
+        supportsCreditCardOnly: true,
         supports7DayTrial: true,
         payoutDestination: 'Conta Bancária vinculada no painel Stripe',
         webhookUrl: `${appUrl}/api/billing/webhook/stripe`,
@@ -661,6 +665,328 @@ router.get('/billing/config', (req: Request, res: Response) => {
     trialDays: 7,
     plans: Object.values(PLANS_CATALOG),
   });
+});
+
+router.get('/billing/public-key', (_req: Request, res: Response) => {
+  const publicKey = process.env.VITE_MERCADOPAGO_PUBLIC_KEY?.trim() || null;
+  res.json({
+    configured: Boolean(publicKey),
+    publicKey,
+  });
+});
+
+function translateMercadoPagoRejection(statusDetail?: string): string {
+  switch (String(statusDetail || '').toLowerCase()) {
+    case 'cc_rejected_insufficient_amount':
+      return 'Cartão recusado por saldo/limite insuficiente para validação. Use um cartão de crédito com limite disponível.';
+    case 'cc_rejected_bad_filled_card_number':
+      return 'Número do cartão de crédito incorreto no banco emissor.';
+    case 'cc_rejected_bad_filled_date':
+      return 'Data de validade recusada pelo banco emissor.';
+    case 'cc_rejected_bad_filled_security_code':
+      return 'Código de segurança (CVV) inválido.';
+    case 'cc_rejected_bad_filled_other':
+      return 'Dados do cartão ou CPF do titular não conferem no banco emissor.';
+    case 'cc_rejected_blacklist':
+      return 'Cartão não autorizado pela política de segurança do emissor.';
+    case 'cc_rejected_call_for_authorize':
+      return 'O banco emissor exigiu autorização. Libere no aplicativo do seu banco ou utilize outro cartão de crédito.';
+    case 'cc_rejected_card_disabled':
+      return 'Cartão bloqueado ou inativo. Desbloqueie no app do banco ou utilize outro cartão de crédito.';
+    case 'cc_rejected_duplicated_payment':
+      return 'Verificação duplicada em sequência. Aguarde alguns segundos antes de tentar novamente.';
+    case 'cc_rejected_high_risk':
+      return 'Cartão recusado pela verificação antifraude. Utilize outro cartão de crédito do titular.';
+    case 'cc_rejected_invalid_installments':
+      return 'Este cartão não suporta cobrança recorrente na função crédito.';
+    case 'cc_rejected_max_attempts':
+      return 'Limite de tentativas excedido para este cartão. Utilize outro cartão de crédito.';
+    default:
+      return statusDetail
+        ? `Cartão de crédito recusado na verificação do emissor (${statusDetail}). Use um cartão ativo e com limite.`
+        : 'Não foi possível validar o cartão de crédito junto ao emissor.';
+  }
+}
+
+async function lookupMercadoPagoCreditBin(bin: string): Promise<{
+  validCreditCard: boolean;
+  paymentMethodId?: string;
+  brandName?: string;
+  error?: string;
+}> {
+  const cleanBin = String(bin || '').replace(/\D/g, '').slice(0, 8);
+  if (cleanBin.length < 6) {
+    return { validCreditCard: false, error: 'BIN do cartão inválido.' };
+  }
+
+  const token = process.env.MERCADOPAGO_ACCESS_TOKEN;
+  const publicKey = process.env.VITE_MERCADOPAGO_PUBLIC_KEY;
+  if (!token && !publicKey) {
+    return {
+      validCreditCard: false,
+      error: 'Credenciais do Mercado Pago não configuradas no servidor.',
+    };
+  }
+
+  const url = publicKey
+    ? `https://api.mercadopago.com/v1/payment_methods/search?public_key=${encodeURIComponent(
+        publicKey
+      )}&marketplace=NONE&bins=${encodeURIComponent(cleanBin.slice(0, 6))}`
+    : `https://api.mercadopago.com/v1/payment_methods/search?marketplace=NONE&bins=${encodeURIComponent(
+        cleanBin.slice(0, 6)
+      )}`;
+
+  const headers: Record<string, string> = {};
+  if (token) {
+    headers.Authorization = `Bearer ${token}`;
+  }
+
+  const mpRes = await fetch(url, { headers });
+  const rawData: any = await mpRes.json().catch(() => null);
+  if (!mpRes.ok) {
+    return {
+      validCreditCard: false,
+      error: rawData?.message || 'Não foi possível consultar a bandeira do cartão no Mercado Pago.',
+    };
+  }
+
+  const candidates: any[] = Array.isArray(rawData)
+    ? rawData
+    : Array.isArray(rawData?.results)
+    ? rawData.results
+    : [];
+
+  const creditMatch = candidates.find(
+    (item) => item?.payment_type_id === 'credit_card' && item?.status === 'active'
+  );
+
+  if (!creditMatch) {
+    const foundTypes = candidates.map((c) => c?.payment_type_id).filter(Boolean);
+    if (foundTypes.includes('debit_card') || foundTypes.includes('prepaid_card')) {
+      return {
+        validCreditCard: false,
+        error:
+          'Este cartão é somente de débito ou pré-pago. Apenas cartões de crédito ativos são aceitos.',
+      };
+    }
+    return {
+      validCreditCard: false,
+      error:
+        'Cartão não reconhecido como cartão de crédito válido no Brasil. Confira os dígitos ou tente outro cartão.',
+    };
+  }
+
+  return {
+    validCreditCard: true,
+    paymentMethodId: String(creditMatch.id),
+    brandName: String(creditMatch.name || creditMatch.id),
+  };
+}
+
+router.get('/billing/mercadopago/bin-check', async (req: Request, res: Response) => {
+  try {
+    const bin = String(req.query?.bin || '');
+    const result = await lookupMercadoPagoCreditBin(bin);
+    if (!result.validCreditCard) {
+      return res.status(400).json(result);
+    }
+    return res.json(result);
+  } catch (err: any) {
+    return res.status(500).json({
+      validCreditCard: false,
+      error: err?.message || 'Erro ao verificar bandeira do cartão.',
+    });
+  }
+});
+
+router.post('/billing/mercadopago/validate-card', async (req: Request, res: Response) => {
+  const token = process.env.MERCADOPAGO_ACCESS_TOKEN;
+  if (!token) {
+    return res.status(503).json({
+      valid: false,
+      error: 'Mercado Pago não configurado no servidor para validação antifraude do cartão.',
+    });
+  }
+
+  try {
+    const {
+      cardTokenId,
+      paymentMethodId,
+      payerEmail,
+      holderName,
+      cpfDigits,
+      userId = 'guest',
+    } = req.body || {};
+
+    const cleanToken = String(cardTokenId || '').trim();
+    const cleanCpf = String(cpfDigits || '').replace(/\D/g, '');
+    const cleanEmail = String(payerEmail || '').trim();
+
+    if (!cleanToken) {
+      return res.status(400).json({ valid: false, error: 'Token do cartão ausente.' });
+    }
+    if (cleanCpf.length !== 11) {
+      return res.status(400).json({ valid: false, error: 'CPF do titular inválido.' });
+    }
+    if (!cleanEmail || !cleanEmail.includes('@')) {
+      return res.status(400).json({ valid: false, error: 'E-mail do titular é obrigatório.' });
+    }
+
+    // Reconfirmar BIN e tipo credit_card pelo token quando disponível
+    let resolvedPaymentMethodId = String(paymentMethodId || '').trim();
+    const tokenLookupRes = await fetch(
+      `https://api.mercadopago.com/v1/card_tokens/${encodeURIComponent(cleanToken)}`,
+      { headers: { Authorization: `Bearer ${token}` } }
+    );
+    if (tokenLookupRes.ok) {
+      const tokenInfo: any = await tokenLookupRes.json().catch(() => ({}));
+      const firstSix = String(tokenInfo?.first_six_digits || '');
+      if (firstSix.length >= 6) {
+        const binCheck = await lookupMercadoPagoCreditBin(firstSix);
+        if (!binCheck.validCreditCard || !binCheck.paymentMethodId) {
+          return res.status(400).json({
+            valid: false,
+            error: binCheck.error || 'Somente cartão de crédito é aceito.',
+          });
+        }
+        resolvedPaymentMethodId = binCheck.paymentMethodId;
+      }
+    }
+
+    if (!resolvedPaymentMethodId) {
+      return res.status(400).json({
+        valid: false,
+        error: 'Não foi possível identificar a bandeira de crédito do cartão.',
+      });
+    }
+
+    const nameParts = String(holderName || 'Titular Cartao').trim().split(/\s+/);
+    const firstName = nameParts[0] || 'Titular';
+    const lastName = nameParts.slice(1).join(' ') || 'Purpose';
+
+    // Pré-autorização de R$ 1,50 sem captura para validar cartão ativo, CVV, CPF e limite disponível
+    const paymentPayload = {
+      transaction_amount: 1.5,
+      token: cleanToken,
+      description: 'Validacao de cartao de credito Purpose Talk (cancelada automaticamente)',
+      installments: 1,
+      payment_method_id: resolvedPaymentMethodId,
+      capture: false,
+      statement_descriptor: 'PURPOSETALK',
+      external_reference: `verify_${String(userId).slice(0, 48)}_${Date.now()}`,
+      payer: {
+        email: cleanEmail,
+        first_name: firstName,
+        last_name: lastName,
+        identification: {
+          type: 'CPF',
+          number: cleanCpf,
+        },
+      },
+    };
+
+    const mpPayRes = await fetch('https://api.mercadopago.com/v1/payments', {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${token}`,
+        'Content-Type': 'application/json',
+        'X-Idempotency-Key': crypto.randomUUID(),
+      },
+      body: JSON.stringify(paymentPayload),
+    });
+
+    const mpPayment: any = await mpPayRes.json().catch(() => ({}));
+    if (!mpPayRes.ok) {
+      return res.status(402).json({
+        valid: false,
+        error:
+          mpPayment?.message ||
+          'Cartão rejeitado na verificação antifraude do Mercado Pago. Confira os dados ou use outro cartão de crédito.',
+      });
+    }
+
+    const payId = String(mpPayment.id || '');
+    const payStatus = String(mpPayment.status || '').toLowerCase();
+    const statusDetail = String(mpPayment.status_detail || '');
+
+    if (payStatus === 'authorized') {
+      // Libera a reserva imediatamente para não comprometer o limite nem cobrar nada
+      await fetch(`https://api.mercadopago.com/v1/payments/${encodeURIComponent(payId)}`, {
+        method: 'PUT',
+        headers: {
+          Authorization: `Bearer ${token}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ status: 'cancelled' }),
+      }).catch((cancelErr) => {
+        console.error('Erro ao cancelar pré-autorização de validação:', cancelErr);
+      });
+
+      return res.json({
+        valid: true,
+        status: 'authorized_and_released',
+        paymentId: payId,
+        paymentMethodId: resolvedPaymentMethodId,
+      });
+    }
+
+    if (payStatus === 'approved') {
+      // Caso o emissor não suporte deferred capture e aprove R$ 1,50, estorna 100% imediatamente
+      await fetch(
+        `https://api.mercadopago.com/v1/payments/${encodeURIComponent(payId)}/refunds`,
+        {
+          method: 'POST',
+          headers: {
+            Authorization: `Bearer ${token}`,
+            'Content-Type': 'application/json',
+            'X-Idempotency-Key': crypto.randomUUID(),
+          },
+          body: JSON.stringify({}),
+        }
+      ).catch((refundErr) => {
+        console.error('Erro ao estornar micro-validação:', refundErr);
+      });
+
+      return res.json({
+        valid: true,
+        status: 'approved_and_refunded',
+        paymentId: payId,
+        paymentMethodId: resolvedPaymentMethodId,
+      });
+    }
+
+    if (payStatus === 'in_process' || payStatus === 'pending') {
+      await fetch(`https://api.mercadopago.com/v1/payments/${encodeURIComponent(payId)}`, {
+        method: 'PUT',
+        headers: {
+          Authorization: `Bearer ${token}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ status: 'cancelled' }),
+      }).catch(() => {});
+
+      return res.status(402).json({
+        valid: false,
+        status: payStatus,
+        statusDetail,
+        error:
+          'Não foi possível confirmar a autorização imediata deste cartão. Utilize outro cartão de crédito.',
+      });
+    }
+
+    return res.status(402).json({
+      valid: false,
+      status: payStatus,
+      statusDetail,
+      error: translateMercadoPagoRejection(statusDetail),
+    });
+  } catch (err: any) {
+    console.error('Erro em /api/billing/mercadopago/validate-card:', err);
+    return res.status(500).json({
+      valid: false,
+      error: err?.message || 'Falha ao validar cartão de crédito junto ao emissor.',
+    });
+  }
 });
 
 // Verify Mercado Pago seller credentials & mode safely on the server
@@ -740,14 +1066,22 @@ router.post('/billing/create-subscription', async (req: Request, res: Response) 
       userId,
       preferredGateway = 'mercadopago',
       paymentMethodLabel,
+      paymentMethodType = 'credit_card',
+      cardTokenId,
+      validationPaymentId,
     } = req.body || {};
 
     const plan = PLANS_CATALOG[String(planId || '')];
     if (!plan) {
       return res.status(400).json({ error: 'Plano selecionado é inválido.' });
     }
+    if (paymentMethodType !== 'credit_card') {
+      return res.status(400).json({
+        error: 'Somente cartão de crédito validado é aceito para iniciar os 7 dias grátis.',
+      });
+    }
     if (!paymentMethodLabel || typeof paymentMethodLabel !== 'string') {
-      return res.status(400).json({ error: 'É obrigatório cadastrar uma forma de pagamento para iniciar os 7 dias grátis.' });
+      return res.status(400).json({ error: 'É obrigatório cadastrar e validar um cartão de crédito para iniciar os 7 dias grátis.' });
     }
 
     const gateway = preferredGateway === 'stripe' ? 'stripe' : 'mercadopago';
@@ -755,6 +1089,19 @@ router.post('/billing/create-subscription', async (req: Request, res: Response) 
 
     // Real Mercado Pago Preapproval API call if token is configured
     if (gateway === 'mercadopago' && process.env.MERCADOPAGO_ACCESS_TOKEN) {
+      const token = process.env.MERCADOPAGO_ACCESS_TOKEN;
+      if (process.env.VITE_MERCADOPAGO_PUBLIC_KEY && (!cardTokenId || !validationPaymentId)) {
+        return res.status(400).json({
+          error:
+            'Valide seu cartão de crédito com CPF e CVV antes de iniciar o período de testes.',
+        });
+      }
+
+      const mpHeaders = {
+        Authorization: `Bearer ${token}`,
+        'Content-Type': 'application/json',
+      };
+
       const mpBody: Record<string, unknown> = {
         reason: `Purpose Talk — ${plan.name} (7 dias grátis)`,
         external_reference: userId || 'guest',
@@ -770,30 +1117,70 @@ router.post('/billing/create-subscription', async (req: Request, res: Response) 
           },
         },
         back_url: `${appUrl}/?page=app&billing=success`,
-        status: 'pending',
+        status: cardTokenId ? 'authorized' : 'pending',
       };
 
+      if (cardTokenId) {
+        mpBody.card_token_id = String(cardTokenId);
+      }
       if (appUrl.startsWith('https://')) {
         mpBody.notification_url = `${appUrl}/api/billing/webhook/mercadopago`;
       }
 
-      const mpResponse = await fetch('https://api.mercadopago.com/preapproval', {
+      let mpResponse = await fetch('https://api.mercadopago.com/preapproval', {
         method: 'POST',
-        headers: {
-          Authorization: `Bearer ${process.env.MERCADOPAGO_ACCESS_TOKEN}`,
-          'Content-Type': 'application/json',
-        },
+        headers: mpHeaders,
         body: JSON.stringify(mpBody),
       });
 
-      const mpData: any = await mpResponse.json();
+      let mpData: any = await mpResponse.json().catch(() => ({}));
+
+      // Fallback automático: se o Mercado Pago exigir preapproval_plan_id ao passar card_token_id
+      if (!mpResponse.ok && cardTokenId) {
+        const planRes = await fetch('https://api.mercadopago.com/preapproval_plan', {
+          method: 'POST',
+          headers: mpHeaders,
+          body: JSON.stringify({
+            reason: `Purpose Talk — ${plan.name}`,
+            auto_recurring: {
+              frequency: plan.frequency,
+              frequency_type: plan.frequencyType,
+              transaction_amount: Number((plan.priceBrlCents / 100).toFixed(2)),
+              currency_id: 'BRL',
+              free_trial: {
+                frequency: 7,
+                frequency_type: 'days',
+              },
+            },
+            back_url: `${appUrl}/?page=app&billing=success`,
+          }),
+        });
+        const planData: any = await planRes.json().catch(() => ({}));
+        if (planRes.ok && planData?.id) {
+          const retryBody: Record<string, unknown> = {
+            preapproval_plan_id: String(planData.id),
+            reason: `Purpose Talk — ${plan.name} (7 dias grátis)`,
+            external_reference: userId || 'guest',
+            payer_email: userEmail || undefined,
+            card_token_id: String(cardTokenId),
+            status: 'authorized',
+          };
+          mpResponse = await fetch('https://api.mercadopago.com/preapproval', {
+            method: 'POST',
+            headers: mpHeaders,
+            body: JSON.stringify(retryBody),
+          });
+          mpData = await mpResponse.json().catch(() => ({}));
+        }
+      }
+
       if (!mpResponse.ok) {
         return res.status(400).json({
           error: mpData?.message || 'Erro ao criar assinatura no Mercado Pago.',
         });
       }
 
-      const isSandbox = process.env.MERCADOPAGO_ACCESS_TOKEN.startsWith('TEST-');
+      const isSandbox = token.startsWith('TEST-');
       return res.json({
         mode: isSandbox ? 'sandbox' : 'live',
         gateway: 'mercadopago',
@@ -801,6 +1188,7 @@ router.post('/billing/create-subscription', async (req: Request, res: Response) 
         checkoutUrl: (isSandbox ? mpData.sandbox_init_point : null) || mpData.init_point || null,
         status: 'trialing',
         trialDays: 7,
+        cardAuthorized: Boolean(cardTokenId),
       });
     }
 

@@ -906,10 +906,10 @@ export const SettingsScreen: React.FC<SettingsScreenProps> = ({
                     <CreditCard className="w-5 h-5 text-emerald-400 shrink-0" />
                     <div>
                       <div className="text-xs font-bold text-slate-100">
-                        Formas de Pagamento ({paymentMethods.length})
+                        Formas de Pagamento ({paymentMethods.filter((m) => m.type === 'credit_card').length})
                       </div>
                       <div className="text-[11px] text-slate-400 mt-0.5">
-                        Cartão de crédito, débito ou PIX
+                        Somente cartão de crédito validado
                       </div>
                     </div>
                   </button>

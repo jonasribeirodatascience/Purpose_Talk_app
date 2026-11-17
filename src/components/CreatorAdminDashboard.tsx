@@ -348,7 +348,7 @@ export const CreatorAdminDashboard: React.FC<CreatorAdminDashboardProps> = ({
                 Mercado Pago · Conta de Recebimento & Credenciais no Servidor
               </h3>
               <p className="text-xs text-slate-400">
-                O valor cobrado após os 7 dias grátis cai diretamente na sua conta Mercado Pago (Cartão ou PIX).
+                O valor cobrado no cartão de crédito após os 7 dias grátis cai diretamente na sua conta Mercado Pago.
               </p>
             </div>
           </div>

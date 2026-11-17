@@ -5,7 +5,6 @@ import {
   Sparkles,
   ShieldCheck,
   CreditCard,
-  QrCode,
   CalendarClock,
   Lock,
   AlertCircle,
@@ -13,10 +12,12 @@ import {
   Crown,
   CheckCircle2,
   Ban,
+  LogOut,
+  ArrowRight,
+  Sparkles as SparklesIcon,
 } from 'lucide-react';
 import {
   PaymentMethodRecord,
-  PaymentMethodType,
   SubscriptionPlanId,
   UserSubscriptionRecord,
 } from '../types';
@@ -29,13 +30,14 @@ import {
   detectCardBrand,
   digitsOnly,
   formatCardNumberDisplay,
+  formatCpfInput,
   formatExpiryInput,
   getBrandDisplayName,
+  isValidCpf,
   isValidLuhn,
   parseAndValidateExpiry,
-  PixKeyKind,
-  validateAndMaskPixKey,
 } from '../utils/paymentValidation';
+import { validateCreditCardWithMercadoPago } from '../utils/mercadoPagoClient';
 import { useFirebase } from '../context/FirebaseContext';
 
 interface SubscriptionPlansModalProps {
@@ -56,6 +58,13 @@ interface SubscriptionPlansModalProps {
   lgpdAccepted?: boolean;
   onOpenLegal?: (tab: 'terms' | 'privacy') => void;
   onAcceptLgpd?: () => Promise<void>;
+  isRequiredOnboarding?: boolean;
+  userEmail?: string | null;
+  userName?: string | null;
+  onSignOut?: () => Promise<void>;
+  onContinueToApp?: () => void;
+  isCreatorAdmin?: boolean;
+  onBypassAsCreator?: () => void;
 }
 
 export const SubscriptionPlansModal: React.FC<SubscriptionPlansModalProps> = ({
@@ -69,6 +78,13 @@ export const SubscriptionPlansModal: React.FC<SubscriptionPlansModalProps> = ({
   lgpdAccepted = false,
   onOpenLegal,
   onAcceptLgpd,
+  isRequiredOnboarding = false,
+  userEmail,
+  userName,
+  onSignOut,
+  onContinueToApp,
+  isCreatorAdmin = false,
+  onBypassAsCreator,
 }) => {
   const { user } = useFirebase();
 
@@ -76,27 +92,41 @@ export const SubscriptionPlansModal: React.FC<SubscriptionPlansModalProps> = ({
     subscription?.planId || 'pro_mensal'
   );
 
-  // Payment method selection or inline creation
-  const [useNewMethod, setUseNewMethod] = useState<boolean>(paymentMethods.length === 0);
-  const [selectedMethodId, setSelectedMethodId] = useState<string>(
-    paymentMethods.find((m) => m.isDefault)?.id || paymentMethods[0]?.id || ''
+  const creditCards = paymentMethods.filter((m) => m.type === 'credit_card');
+  const hasExistingActiveAccess = Boolean(
+    subscription && (subscription.status === 'trialing' || subscription.status === 'active')
   );
 
-  // Inline new payment method inputs
-  const [pmType, setPmType] = useState<PaymentMethodType>('credit_card');
+  // Payment method selection (apenas se já tiver assinatura ativa/trialing) ou cadastro obrigatório de cartão de crédito validado
+  const [useNewMethod, setUseNewMethod] = useState<boolean>(
+    !hasExistingActiveAccess || creditCards.length === 0
+  );
+  const [selectedMethodId, setSelectedMethodId] = useState<string>(
+    creditCards.find((m) => m.isDefault)?.id || creditCards[0]?.id || ''
+  );
+
+  // Credit card registration inputs (only credit_card allowed)
   const [cardNumber, setCardNumber] = useState('');
   const [holderName, setHolderName] = useState('');
+  const [holderCpf, setHolderCpf] = useState('');
   const [expiry, setExpiry] = useState('');
   const [cvv, setCvv] = useState('');
-  const [pixKind, setPixKind] = useState<PixKeyKind>('email');
-  const [pixKey, setPixKey] = useState('');
 
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [submitStatusLabel, setSubmitStatusLabel] = useState<string | null>(null);
   const [isCanceling, setIsCanceling] = useState(false);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const [successMsg, setSuccessMsg] = useState<string | null>(null);
   const [liveCheckoutUrl, setLiveCheckoutUrl] = useState<string | null>(null);
   const [acceptedLegalInModal, setAcceptedLegalInModal] = useState<boolean>(lgpdAccepted);
+  const [onboardingActivated, setOnboardingActivated] = useState<boolean>(false);
+  const [activatedSummary, setActivatedSummary] = useState<{
+    planName: string;
+    priceLabel: string;
+    billingCycle: 'monthly' | 'annual';
+    paymentMethodLabel: string;
+    trialEndsAt: number;
+  } | null>(null);
 
   const handleCancelSubscription = async () => {
     if (!subscription) return;
@@ -140,16 +170,26 @@ export const SubscriptionPlansModal: React.FC<SubscriptionPlansModalProps> = ({
     if (!isOpen) return;
     setErrorMsg(null);
     setSuccessMsg(null);
+    setLiveCheckoutUrl(null);
+    setOnboardingActivated(false);
+    setActivatedSummary(null);
+  }, [isOpen]);
+
+  useEffect(() => {
+    if (!isOpen) return;
     setAcceptedLegalInModal(lgpdAccepted);
-    if (paymentMethods.length === 0) {
+  }, [isOpen, lgpdAccepted]);
+
+  useEffect(() => {
+    if (!isOpen) return;
+    if (!hasExistingActiveAccess || creditCards.length === 0) {
       setUseNewMethod(true);
       setSelectedMethodId('');
-    } else if (!selectedMethodId || !paymentMethods.some((m) => m.id === selectedMethodId)) {
-      const def = paymentMethods.find((m) => m.isDefault) || paymentMethods[0];
+    } else if (!selectedMethodId || !creditCards.some((m) => m.id === selectedMethodId)) {
+      const def = creditCards.find((m) => m.isDefault) || creditCards[0];
       setSelectedMethodId(def.id);
-      setUseNewMethod(false);
     }
-  }, [isOpen, paymentMethods, lgpdAccepted]);
+  }, [isOpen, paymentMethods, selectedMethodId, hasExistingActiveAccess]);
 
   if (!isOpen) return null;
 
@@ -167,6 +207,7 @@ export const SubscriptionPlansModal: React.FC<SubscriptionPlansModalProps> = ({
     setSuccessMsg(null);
     setLiveCheckoutUrl(null);
     setIsSubmitting(true);
+    setSubmitStatusLabel('Validando cartão de crédito...');
 
     try {
       if (!acceptedLegalInModal) {
@@ -179,63 +220,70 @@ export const SubscriptionPlansModal: React.FC<SubscriptionPlansModalProps> = ({
         await onAcceptLgpd();
       }
 
-      let chosenMethod = paymentMethods.find((m) => m.id === selectedMethodId);
+      let chosenMethod = creditCards.find((m) => m.id === selectedMethodId);
+      const mustValidateCardNow =
+        useNewMethod || !chosenMethod || !hasExistingActiveAccess || isRequiredOnboarding;
 
-      // Register new payment method first if user filled the inline form
-      if (useNewMethod || !chosenMethod) {
+      let validationPaymentId: string | undefined;
+      let subscriptionCardTokenId: string | undefined;
+
+      if (mustValidateCardNow) {
         const cleanHolder = holderName.trim();
         if (cleanHolder.length < 2) {
-          throw new Error('Informe o nome completo do titular da forma de pagamento.');
+          throw new Error('Informe o nome completo impresso no cartão de crédito.');
         }
+
+        if (!isValidCpf(holderCpf)) {
+          throw new Error('Informe um CPF válido do titular para a validação antifraude do cartão.');
+        }
+
+        if (!isValidLuhn(cardNumber)) {
+          throw new Error('Número do cartão de crédito inválido. Confira os dígitos antes de continuar.');
+        }
+
+        const expCheck = parseAndValidateExpiry(expiry);
+        if (!expCheck.valid || !expCheck.month || !expCheck.year) {
+          throw new Error(expCheck.error || 'Validade do cartão inválida.');
+        }
+
+        const cleanCvv = digitsOnly(cvv);
+        const minCvv = detectedBrand === 'amex' ? 4 : 3;
+        if (cleanCvv.length < minCvv || cleanCvv.length > 4) {
+          throw new Error(`Informe os ${minCvv} dígitos do CVV.`);
+        }
+
+        setSubmitStatusLabel('Verificando bandeira e limite disponível (sem cobrança)...');
+        const mpCheck = await validateCreditCardWithMercadoPago({
+          cardNumber,
+          holderName: cleanHolder,
+          cpf: holderCpf,
+          expiryMonth: expCheck.month,
+          expiryYear: expCheck.year,
+          cvv: cleanCvv,
+          payerEmail: user?.email || userEmail || 'aluno@purposetalk.app',
+          userId: user?.uid || 'local_user',
+          createSubscriptionToken: true,
+        });
+
+        validationPaymentId = mpCheck.validationPaymentId;
+        subscriptionCardTokenId = mpCheck.subscriptionCardTokenId;
 
         const newMethodId = `pm_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`;
+        const last4 = digitsOnly(cardNumber).slice(-4);
+        const brandLabel = getBrandDisplayName(detectedBrand);
 
-        if (pmType === 'pix') {
-          const pixCheck = validateAndMaskPixKey(pixKey, pixKind);
-          if (!pixCheck.valid || !pixCheck.masked) {
-            throw new Error(pixCheck.error || 'Chave PIX inválida.');
-          }
-          chosenMethod = {
-            id: newMethodId,
-            type: 'pix',
-            label: `PIX (${pixCheck.labelSuffix})`,
-            holderName: cleanHolder.slice(0, 80),
-            brand: 'pix',
-            pixKeyMasked: pixCheck.masked,
-            isDefault: true,
-            createdAt: Date.now(),
-          };
-        } else {
-          if (!isValidLuhn(cardNumber)) {
-            throw new Error('Número de cartão inválido. Confira os dígitos antes de continuar.');
-          }
-          const expCheck = parseAndValidateExpiry(expiry);
-          if (!expCheck.valid || !expCheck.month || !expCheck.year) {
-            throw new Error(expCheck.error || 'Validade do cartão inválida.');
-          }
-          const cleanCvv = digitsOnly(cvv);
-          const minCvv = detectedBrand === 'amex' ? 4 : 3;
-          if (cleanCvv.length < minCvv || cleanCvv.length > 4) {
-            throw new Error(`Informe os ${minCvv} dígitos do CVV.`);
-          }
-
-          const last4 = digitsOnly(cardNumber).slice(-4);
-          const brandLabel = getBrandDisplayName(detectedBrand);
-          const typeLabel = pmType === 'credit_card' ? 'Crédito' : 'Débito';
-
-          chosenMethod = {
-            id: newMethodId,
-            type: pmType,
-            label: `${brandLabel} ${typeLabel} •••• ${last4}`.slice(0, 80),
-            holderName: cleanHolder.toUpperCase().slice(0, 80),
-            brand: detectedBrand,
-            last4,
-            expiryMonth: expCheck.month,
-            expiryYear: expCheck.year,
-            isDefault: true,
-            createdAt: Date.now(),
-          };
-        }
+        chosenMethod = {
+          id: newMethodId,
+          type: 'credit_card',
+          label: `${brandLabel} Crédito •••• ${last4}`.slice(0, 80),
+          holderName: cleanHolder.toUpperCase().slice(0, 80),
+          brand: detectedBrand,
+          last4,
+          expiryMonth: expCheck.month,
+          expiryYear: expCheck.year,
+          isDefault: true,
+          createdAt: Date.now(),
+        };
 
         await onAddPaymentMethod(chosenMethod);
         setSelectedMethodId(chosenMethod.id);
@@ -243,8 +291,14 @@ export const SubscriptionPlansModal: React.FC<SubscriptionPlansModalProps> = ({
         setCardNumber('');
         setCvv('');
         setExpiry('');
-        setPixKey('');
+        setHolderCpf('');
       }
+
+      if (!chosenMethod) {
+        throw new Error('Selecione ou valide um cartão de crédito para continuar.');
+      }
+
+      setSubmitStatusLabel('Ativando 7 dias grátis...');
 
       // Call server billing route to initiate Mercado Pago trial
       const apiRes = await fetch('/api/billing/create-subscription', {
@@ -252,10 +306,13 @@ export const SubscriptionPlansModal: React.FC<SubscriptionPlansModalProps> = ({
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           planId: activePlan.id,
-          userEmail: user?.email || 'aluno@purposetalk.app',
+          userEmail: user?.email || userEmail || 'aluno@purposetalk.app',
           userId: user?.uid || 'local_user',
           preferredGateway: 'mercadopago',
           paymentMethodLabel: chosenMethod.label,
+          paymentMethodType: 'credit_card',
+          cardTokenId: subscriptionCardTokenId,
+          validationPaymentId,
         }),
       });
 
@@ -269,7 +326,7 @@ export const SubscriptionPlansModal: React.FC<SubscriptionPlansModalProps> = ({
 
       const subRecord: UserSubscriptionRecord = {
         uid: user?.uid || 'local_user',
-        userEmail: user?.email || 'aluno@purposetalk.app',
+        userEmail: user?.email || userEmail || 'aluno@purposetalk.app',
         userName: user?.displayName || chosenMethod.holderName || 'Aluno Purpose Talk',
         planId: activePlan.id,
         planName: activePlan.name,
@@ -295,6 +352,18 @@ export const SubscriptionPlansModal: React.FC<SubscriptionPlansModalProps> = ({
         setLiveCheckoutUrl(apiData.checkoutUrl);
       }
 
+      setActivatedSummary({
+        planName: activePlan.name,
+        priceLabel: activePlan.priceLabel,
+        billingCycle: activePlan.billingCycle,
+        paymentMethodLabel: chosenMethod.label,
+        trialEndsAt: trialEnd,
+      });
+
+      if (isRequiredOnboarding) {
+        setOnboardingActivated(true);
+      }
+
       setSuccessMsg(
         `Período de 7 dias grátis do plano ${activePlan.name} ativado com ${chosenMethod.label}! Primeira cobrança prevista para ${new Date(
           trialEnd
@@ -304,45 +373,184 @@ export const SubscriptionPlansModal: React.FC<SubscriptionPlansModalProps> = ({
       setErrorMsg(err?.message || 'Erro ao iniciar teste grátis.');
     } finally {
       setIsSubmitting(false);
+      setSubmitStatusLabel(null);
     }
   };
 
+  const outerWrapperClass = isRequiredOnboarding
+    ? 'min-h-screen w-full bg-slate-950 flex items-center justify-center p-4 sm:p-6'
+    : 'fixed inset-0 z-50 flex items-center justify-center bg-black/75 backdrop-blur-sm p-4';
+
+  const cardContainerClass = isRequiredOnboarding
+    ? 'bg-slate-900 border border-slate-700/80 rounded-2xl w-full max-w-5xl shadow-2xl flex flex-col overflow-hidden'
+    : 'bg-slate-900 border border-slate-700/80 rounded-2xl w-full max-w-5xl max-h-[92vh] overflow-hidden shadow-2xl flex flex-col';
+
+  const bodyContainerClass = isRequiredOnboarding
+    ? 'p-5 sm:p-7 space-y-6'
+    : 'flex-1 overflow-y-auto p-6 space-y-6';
+
   return (
     <div
-      className="fixed inset-0 z-50 flex items-center justify-center bg-black/75 backdrop-blur-sm p-4"
-      role="dialog"
-      aria-modal="true"
+      className={outerWrapperClass}
+      role={isRequiredOnboarding ? 'region' : 'dialog'}
+      aria-modal={isRequiredOnboarding ? undefined : true}
       aria-labelledby="plans-modal-title"
     >
-      <div className="bg-slate-900 border border-slate-700/80 rounded-2xl w-full max-w-5xl max-h-[92vh] overflow-hidden shadow-2xl flex flex-col">
+      <div className={cardContainerClass}>
         {/* Top Modal Header */}
-        <div className="flex items-center justify-between px-6 py-4 border-b border-slate-800 bg-gradient-to-r from-indigo-950/70 via-slate-900 to-amber-950/40">
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 px-6 py-4 border-b border-slate-800 bg-gradient-to-r from-indigo-950/70 via-slate-900 to-amber-950/40">
           <div className="flex items-center gap-3">
-            <div className="w-10 h-10 rounded-xl bg-amber-500/20 border border-amber-500/40 flex items-center justify-center text-amber-300">
+            <div className="w-10 h-10 rounded-xl bg-amber-500/20 border border-amber-500/40 flex items-center justify-center text-amber-300 shrink-0">
               <Crown className="w-5 h-5" />
             </div>
             <div>
+              {isRequiredOnboarding && (
+                <div className="text-[11px] font-bold uppercase tracking-wider text-emerald-300 mb-0.5">
+                  Etapa obrigatória antes de iniciar · R$ 0,00 hoje
+                </div>
+              )}
               <h2 id="plans-modal-title" className="text-lg font-extrabold text-white tracking-tight">
-                Planos Purpose Talk · 7 Dias Grátis Iniciais
+                {isRequiredOnboarding
+                  ? 'Escolha seu Plano e Valide seu Cartão de Crédito'
+                  : 'Planos Purpose Talk · 7 Dias Grátis Iniciais'}
               </h2>
               <p className="text-xs text-slate-400">
-                Cadastre um cartão ou PIX hoje (R$ 0,00 agora) e teste tudo por 7 dias sem compromisso
+                Somente cartão de crédito ativo · Validação de limite sem cobrança inicial (R$ 0,00 hoje)
               </p>
             </div>
           </div>
 
-          <button
-            type="button"
-            onClick={onClose}
-            aria-label="Fechar planos e assinatura"
-            className="p-2 rounded-lg text-slate-400 hover:text-white hover:bg-slate-800 transition cursor-pointer"
-          >
-            <X className="w-5 h-5" />
-          </button>
+          {isRequiredOnboarding ? (
+            <div className="flex items-center gap-2 flex-wrap sm:justify-end">
+              {(userName || userEmail) && (
+                <span className="text-xs text-slate-300 bg-slate-800/80 border border-slate-700 px-2.5 py-1 rounded-lg truncate max-w-[210px]">
+                  {userName || userEmail}
+                </span>
+              )}
+              {isCreatorAdmin && onBypassAsCreator && (
+                <button
+                  type="button"
+                  onClick={onBypassAsCreator}
+                  className="px-3 py-1.5 rounded-lg bg-amber-500/15 border border-amber-500/30 hover:bg-amber-500/25 text-amber-200 text-xs font-semibold transition cursor-pointer"
+                >
+                  Acesso Criador
+                </button>
+              )}
+              {onSignOut && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    onSignOut().catch(() => {});
+                  }}
+                  className="px-3 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-semibold flex items-center gap-1.5 transition cursor-pointer"
+                >
+                  <LogOut className="w-3.5 h-3.5" />
+                  <span>Sair</span>
+                </button>
+              )}
+            </div>
+          ) : (
+            <button
+              type="button"
+              onClick={onClose}
+              aria-label="Fechar planos e assinatura"
+              className="p-2 rounded-lg text-slate-400 hover:text-white hover:bg-slate-800 transition cursor-pointer"
+            >
+              <X className="w-5 h-5" />
+            </button>
+          )}
         </div>
 
         {/* Scrollable Content */}
-        <div className="flex-1 overflow-y-auto p-6 space-y-6">
+        <div className={bodyContainerClass}>
+          {isRequiredOnboarding && onboardingActivated && activatedSummary ? (
+            <div className="rounded-2xl border border-emerald-500/40 bg-gradient-to-br from-emerald-950/50 via-slate-900 to-indigo-950/40 p-6 sm:p-8 space-y-6">
+              <div className="flex flex-col sm:flex-row sm:items-center gap-4">
+                <div className="w-12 h-12 rounded-2xl bg-emerald-500/20 border border-emerald-500/40 flex items-center justify-center text-emerald-300 shrink-0">
+                  <CheckCircle2 className="w-7 h-7" />
+                </div>
+                <div className="space-y-1">
+                  <div className="inline-flex items-center gap-1.5 text-xs font-bold uppercase tracking-wider text-emerald-300">
+                    <SparklesIcon className="w-3.5 h-3.5" />
+                    <span>7 Dias Grátis Liberados · R$ 0,00 Cobrado Hoje</span>
+                  </div>
+                  <h3 className="text-xl font-extrabold text-white">
+                    Tudo pronto! Seu período de testes foi ativado.
+                  </h3>
+                  <p className="text-xs text-slate-300">
+                    Nenhuma cobrança foi realizada agora. A primeira cobrança acontecerá somente após os {SUBSCRIPTION_TRIAL_DAYS} dias grátis, caso você não cancele antes.
+                  </p>
+                </div>
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
+                <div className="rounded-xl bg-slate-950/70 border border-slate-800 p-3.5">
+                  <div className="text-[11px] text-slate-400">Plano Escolhido</div>
+                  <div className="text-sm font-extrabold text-white mt-0.5">{activatedSummary.planName}</div>
+                </div>
+                <div className="rounded-xl bg-slate-950/70 border border-slate-800 p-3.5">
+                  <div className="text-[11px] text-slate-400">Forma de Pagamento</div>
+                  <div className="text-sm font-extrabold text-white mt-0.5 truncate">
+                    {activatedSummary.paymentMethodLabel}
+                  </div>
+                </div>
+                <div className="rounded-xl bg-slate-950/70 border border-slate-800 p-3.5">
+                  <div className="text-[11px] text-slate-400">Cobrança Inicial Hoje</div>
+                  <div className="text-sm font-extrabold text-emerald-400 mt-0.5">R$ 0,00</div>
+                </div>
+                <div className="rounded-xl bg-slate-950/70 border border-slate-800 p-3.5">
+                  <div className="text-[11px] text-slate-400">1ª Cobrança Após Testes</div>
+                  <div className="text-sm font-extrabold text-amber-300 mt-0.5">
+                    {new Date(activatedSummary.trialEndsAt).toLocaleDateString('pt-BR')} ·{' '}
+                    {activatedSummary.priceLabel}
+                  </div>
+                </div>
+              </div>
+
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pt-2 border-t border-slate-800/80">
+                {liveCheckoutUrl ? (
+                  <a
+                    href={liveCheckoutUrl}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="inline-flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl bg-slate-800 hover:bg-slate-700 border border-slate-700 text-emerald-300 text-xs font-bold transition"
+                  >
+                    <span>Autorizar assinatura recorrente no Mercado Pago</span>
+                    <ExternalLink className="w-3.5 h-3.5" />
+                  </a>
+                ) : (
+                  <span className="text-xs text-slate-400">
+                    Você pode gerenciar ou cancelar sua assinatura a qualquer momento em Configurações.
+                  </span>
+                )}
+
+                {onContinueToApp && (
+                  <button
+                    type="button"
+                    onClick={onContinueToApp}
+                    className="px-6 py-3 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white font-extrabold text-sm flex items-center justify-center gap-2 transition shadow-lg cursor-pointer"
+                  >
+                    <span>Entrar no Purpose Talk Agora</span>
+                    <ArrowRight className="w-4 h-4" />
+                  </button>
+                )}
+              </div>
+            </div>
+          ) : (
+            <>
+              {isRequiredOnboarding && (
+                <div className="rounded-2xl border border-emerald-500/30 bg-emerald-950/25 p-4 flex items-start gap-3">
+                  <ShieldCheck className="w-5 h-5 text-emerald-400 shrink-0 mt-0.5" />
+                  <div className="text-xs text-slate-200 space-y-1 leading-relaxed">
+                    <div className="font-bold text-emerald-300">
+                      Somente Cartão de Crédito · Validação de limite sem cobrança inicial (R$ 0,00 hoje)
+                    </div>
+                    <p className="text-slate-300">
+                      Para evitar cartões inválidos ou sem limite, realizamos uma pré-autorização temporária de R$ 1,50 cancelada automaticamente na hora (sem cobrança na fatura). A primeira cobrança ocorre apenas após os {SUBSCRIPTION_TRIAL_DAYS} dias grátis, caso não cancele antes.
+                    </p>
+                  </div>
+                </div>
+              )}
           {/* Active Subscription Banner */}
           {subscription && (
             <div className="rounded-2xl border border-indigo-500/40 bg-indigo-950/30 p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
@@ -504,33 +712,33 @@ export const SubscriptionPlansModal: React.FC<SubscriptionPlansModalProps> = ({
               <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
                 <h3 className="text-sm font-bold text-white flex items-center gap-2">
                   <CreditCard className="w-4 h-4 text-emerald-400" />
-                  <span>2. Cadastre sua Forma de Pagamento para liberar os 7 Dias Grátis</span>
+                  <span>2. Cadastre e Valide seu Cartão de Crédito (Somente Crédito)</span>
                 </h3>
                 <span className="text-[11px] text-slate-400 flex items-center gap-1">
                   <ShieldCheck className="w-3.5 h-3.5 text-emerald-400" />
-                  Processado via Mercado Pago · Dados protegidos (sem salvar CVV)
+                  Verificação antifraude & limite Mercado Pago · Sem salvar CVV
                 </span>
               </div>
 
-              {/* Saved Methods vs Inline New Form */}
-              {paymentMethods.length > 0 && (
+              {/* Saved Credit Cards (only selectable when user already holds an active/trialing subscription and wants to switch plans) */}
+              {hasExistingActiveAccess && creditCards.length > 0 && (
                 <div className="space-y-2.5">
                   <div className="flex items-center justify-between text-xs">
                     <span className="font-semibold text-slate-300">
-                      Usar forma de pagamento cadastrada ou adicionar nova:
+                      Usar cartão de crédito já validado ou cadastrar novo:
                     </span>
                     <button
                       type="button"
                       onClick={() => setUseNewMethod((v) => !v)}
                       className="text-indigo-300 hover:text-white font-semibold underline cursor-pointer"
                     >
-                      {useNewMethod ? 'Usar método já salvo' : '+ Cadastrar novo cartão ou PIX'}
+                      {useNewMethod ? 'Usar cartão já salvo' : '+ Cadastrar novo cartão de crédito'}
                     </button>
                   </div>
 
                   {!useNewMethod && (
                     <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
-                      {paymentMethods.map((pm) => {
+                      {creditCards.map((pm) => {
                         const chosen = selectedMethodId === pm.id;
                         return (
                           <button
@@ -544,18 +752,13 @@ export const SubscriptionPlansModal: React.FC<SubscriptionPlansModalProps> = ({
                             }`}
                           >
                             <div className="flex items-center gap-2.5 min-w-0">
-                              {pm.type === 'pix' ? (
-                                <QrCode className="w-4 h-4 text-emerald-400 shrink-0" />
-                              ) : (
-                                <CreditCard className="w-4 h-4 text-indigo-400 shrink-0" />
-                              )}
+                              <CreditCard className="w-4 h-4 text-indigo-400 shrink-0" />
                               <div className="min-w-0">
                                 <div className="text-xs font-bold text-white truncate">
                                   {pm.label}
                                 </div>
                                 <div className="text-[11px] text-slate-400 truncate">
-                                  {pm.holderName} ·{' '}
-                                  {pm.type === 'pix' ? pm.pixKeyMasked : `•••• ${pm.last4}`}
+                                  {pm.holderName} · •••• {pm.last4}
                                 </div>
                               </div>
                             </div>
@@ -576,158 +779,101 @@ export const SubscriptionPlansModal: React.FC<SubscriptionPlansModalProps> = ({
                 </div>
               )}
 
-              {/* Inline Payment Method Registration Form */}
-              {useNewMethod && (
+              {/* Inline Credit Card Validation Form */}
+              {(useNewMethod || !hasExistingActiveAccess || creditCards.length === 0) && (
                 <div className="space-y-4 pt-2 border-t border-slate-800/80">
-                  <div className="flex items-center gap-2 flex-wrap">
-                    <span className="text-xs font-semibold text-slate-300">Modalidade:</span>
-                    <div className="flex items-center bg-slate-900 border border-slate-800 rounded-lg p-0.5 text-xs">
-                      <button
-                        type="button"
-                        onClick={() => setPmType('credit_card')}
-                        className={`px-3 py-1 rounded-md font-semibold cursor-pointer ${
-                          pmType === 'credit_card'
-                            ? 'bg-indigo-600 text-white'
-                            : 'text-slate-400 hover:text-slate-200'
-                        }`}
-                      >
-                        Cartão de Crédito
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => setPmType('debit_card')}
-                        className={`px-3 py-1 rounded-md font-semibold cursor-pointer ${
-                          pmType === 'debit_card'
-                            ? 'bg-indigo-600 text-white'
-                            : 'text-slate-400 hover:text-slate-200'
-                        }`}
-                      >
-                        Cartão de Débito
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => setPmType('pix')}
-                        className={`px-3 py-1 rounded-md font-semibold cursor-pointer ${
-                          pmType === 'pix'
-                            ? 'bg-emerald-600 text-white'
-                            : 'text-slate-400 hover:text-slate-200'
-                        }`}
-                      >
-                        PIX
-                      </button>
-                    </div>
+                  <div className="flex items-center justify-between flex-wrap gap-2">
+                    <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-indigo-600/20 border border-indigo-500/40 text-indigo-200 text-xs font-semibold">
+                      <CreditCard className="w-3.5 h-3.5" />
+                      Modalidade exclusiva: Cartão de Crédito (validação em tempo real)
+                    </span>
+                    <span className="text-[11px] text-slate-400">
+                      Pré-autorização de R$ 1,50 cancelada automaticamente após confirmar limite
+                    </span>
                   </div>
 
-                  {pmType !== 'pix' ? (
-                    <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
-                      <div className="sm:col-span-2">
-                        <label className="block text-xs font-semibold text-slate-300 mb-1">
-                          Número do Cartão ({getBrandDisplayName(detectedBrand)})
-                        </label>
-                        <input
-                          type="text"
-                          inputMode="numeric"
-                          placeholder="0000 0000 0000 0000"
-                          value={cardNumber}
-                          onChange={(e) => setCardNumber(formatCardNumberDisplay(e.target.value))}
-                          className="w-full bg-slate-900 border border-slate-700 rounded-xl px-3 py-2 text-sm text-white placeholder-slate-500 font-mono-code focus:outline-none focus:border-indigo-500"
-                          required
-                        />
-                      </div>
-
-                      <div>
-                        <label className="block text-xs font-semibold text-slate-300 mb-1">
-                          Validade (MM/AA)
-                        </label>
-                        <input
-                          type="text"
-                          inputMode="numeric"
-                          placeholder="12/29"
-                          maxLength={5}
-                          value={expiry}
-                          onChange={(e) => setExpiry(formatExpiryInput(e.target.value))}
-                          className="w-full bg-slate-900 border border-slate-700 rounded-xl px-3 py-2 text-sm text-white placeholder-slate-500 font-mono-code focus:outline-none focus:border-indigo-500"
-                          required
-                        />
-                      </div>
-
-                      <div>
-                        <label className="block text-xs font-semibold text-slate-300 mb-1">
-                          CVV
-                        </label>
-                        <input
-                          type="password"
-                          inputMode="numeric"
-                          placeholder="•••"
-                          maxLength={4}
-                          value={cvv}
-                          onChange={(e) => setCvv(digitsOnly(e.target.value).slice(0, 4))}
-                          className="w-full bg-slate-900 border border-slate-700 rounded-xl px-3 py-2 text-sm text-white placeholder-slate-500 font-mono-code focus:outline-none focus:border-indigo-500"
-                          required
-                        />
-                      </div>
-
-                      <div className="sm:col-span-2 lg:col-span-4">
-                        <label className="block text-xs font-semibold text-slate-300 mb-1">
-                          Nome Impresso no Cartão
-                        </label>
-                        <input
-                          type="text"
-                          placeholder="Ex: JONAS RIBEIRO"
-                          value={holderName}
-                          onChange={(e) => setHolderName(e.target.value)}
-                          className="w-full bg-slate-900 border border-slate-700 rounded-xl px-3 py-2 text-sm text-white placeholder-slate-500 focus:outline-none focus:border-indigo-500"
-                          required
-                        />
-                      </div>
+                  <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
+                    <div className="sm:col-span-2">
+                      <label className="block text-xs font-semibold text-slate-300 mb-1">
+                        Número do Cartão de Crédito ({getBrandDisplayName(detectedBrand)})
+                      </label>
+                      <input
+                        type="text"
+                        inputMode="numeric"
+                        autoComplete="cc-number"
+                        placeholder="0000 0000 0000 0000"
+                        value={cardNumber}
+                        onChange={(e) => setCardNumber(formatCardNumberDisplay(e.target.value))}
+                        className="w-full bg-slate-900 border border-slate-700 rounded-xl px-3 py-2 text-sm text-white placeholder-slate-500 font-mono-code focus:outline-none focus:border-indigo-500"
+                        required
+                      />
                     </div>
-                  ) : (
-                    <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-                      <div>
-                        <label className="block text-xs font-semibold text-slate-300 mb-1">
-                          Tipo de Chave PIX
-                        </label>
-                        <select
-                          value={pixKind}
-                          onChange={(e) => setPixKind(e.target.value as PixKeyKind)}
-                          className="w-full bg-slate-900 border border-slate-700 rounded-xl px-3 py-2 text-sm text-white focus:outline-none focus:border-emerald-500"
-                        >
-                          <option value="email">E-mail</option>
-                          <option value="cpf">CPF</option>
-                          <option value="phone">Celular</option>
-                          <option value="random">Chave Aleatória</option>
-                        </select>
-                      </div>
 
-                      <div>
-                        <label className="block text-xs font-semibold text-slate-300 mb-1">
-                          Chave PIX
-                        </label>
-                        <input
-                          type="text"
-                          placeholder="Digite sua chave PIX"
-                          value={pixKey}
-                          onChange={(e) => setPixKey(e.target.value)}
-                          className="w-full bg-slate-900 border border-slate-700 rounded-xl px-3 py-2 text-sm text-white placeholder-slate-500 focus:outline-none focus:border-emerald-500"
-                          required
-                        />
-                      </div>
-
-                      <div>
-                        <label className="block text-xs font-semibold text-slate-300 mb-1">
-                          Nome do Titular
-                        </label>
-                        <input
-                          type="text"
-                          placeholder="Ex: Jonas Ribeiro"
-                          value={holderName}
-                          onChange={(e) => setHolderName(e.target.value)}
-                          className="w-full bg-slate-900 border border-slate-700 rounded-xl px-3 py-2 text-sm text-white placeholder-slate-500 focus:outline-none focus:border-emerald-500"
-                          required
-                        />
-                      </div>
+                    <div>
+                      <label className="block text-xs font-semibold text-slate-300 mb-1">
+                        Validade (MM/AA)
+                      </label>
+                      <input
+                        type="text"
+                        inputMode="numeric"
+                        autoComplete="cc-exp"
+                        placeholder="12/29"
+                        maxLength={5}
+                        value={expiry}
+                        onChange={(e) => setExpiry(formatExpiryInput(e.target.value))}
+                        className="w-full bg-slate-900 border border-slate-700 rounded-xl px-3 py-2 text-sm text-white placeholder-slate-500 font-mono-code focus:outline-none focus:border-indigo-500"
+                        required
+                      />
                     </div>
-                  )}
+
+                    <div>
+                      <label className="block text-xs font-semibold text-slate-300 mb-1">
+                        CVV
+                      </label>
+                      <input
+                        type="password"
+                        inputMode="numeric"
+                        autoComplete="cc-csc"
+                        placeholder="•••"
+                        maxLength={4}
+                        value={cvv}
+                        onChange={(e) => setCvv(digitsOnly(e.target.value).slice(0, 4))}
+                        className="w-full bg-slate-900 border border-slate-700 rounded-xl px-3 py-2 text-sm text-white placeholder-slate-500 font-mono-code focus:outline-none focus:border-indigo-500"
+                        required
+                      />
+                    </div>
+
+                    <div className="sm:col-span-2 lg:col-span-3">
+                      <label className="block text-xs font-semibold text-slate-300 mb-1">
+                        Nome Impresso no Cartão
+                      </label>
+                      <input
+                        type="text"
+                        autoComplete="cc-name"
+                        placeholder="Ex: JONAS RIBEIRO"
+                        value={holderName}
+                        onChange={(e) => setHolderName(e.target.value)}
+                        className="w-full bg-slate-900 border border-slate-700 rounded-xl px-3 py-2 text-sm text-white placeholder-slate-500 focus:outline-none focus:border-indigo-500"
+                        required
+                      />
+                    </div>
+
+                    <div>
+                      <label className="block text-xs font-semibold text-slate-300 mb-1">
+                        CPF do Titular
+                      </label>
+                      <input
+                        type="text"
+                        inputMode="numeric"
+                        placeholder="000.000.000-00"
+                        maxLength={14}
+                        value={holderCpf}
+                        onChange={(e) => setHolderCpf(formatCpfInput(e.target.value))}
+                        className="w-full bg-slate-900 border border-slate-700 rounded-xl px-3 py-2 text-sm text-white placeholder-slate-500 font-mono-code focus:outline-none focus:border-indigo-500"
+                        required
+                      />
+                    </div>
+                  </div>
                 </div>
               )}
 
@@ -817,13 +963,15 @@ export const SubscriptionPlansModal: React.FC<SubscriptionPlansModalProps> = ({
                   <Lock className="w-4 h-4" />
                   <span>
                     {isSubmitting
-                      ? 'Ativando 7 dias grátis...'
-                      : `Iniciar 7 Dias Grátis · ${activePlan.name}`}
+                      ? submitStatusLabel || 'Validando cartão e ativando 7 dias grátis...'
+                      : `Validar Cartão e Iniciar 7 Dias Grátis · ${activePlan.name}`}
                   </span>
                 </button>
               </div>
             </div>
           </form>
+            </>
+          )}
         </div>
       </div>
     </div>

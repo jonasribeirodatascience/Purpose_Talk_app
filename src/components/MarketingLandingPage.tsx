@@ -410,7 +410,7 @@ export const MarketingLandingPage: React.FC<MarketingLandingPageProps> = ({
                   Experimente tudo por 7 dias sem cobrança hoje.
                 </h2>
                 <p className="text-sm text-slate-400">
-                  Integração preparada com Mercado Pago (PIX ou Cartão). Cancele em 1 clique antes do 7º dia se preferir.
+                  Integração preparada com Mercado Pago (Cartão de Crédito com validação antifraude sem cobrança inicial). Cancele em 1 clique antes do 7º dia se preferir.
                 </p>
               </div>
             </div>

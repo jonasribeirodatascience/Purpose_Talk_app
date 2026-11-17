@@ -157,36 +157,28 @@ service cloud.firestore {
     }
 
     function isValidPaymentMethod(data, userId) {
-      return data.keys().hasAll(['uid', 'type', 'label', 'holderName', 'brand', 'isDefault', 'createdAt', 'updatedAt'])
+      return data.keys().hasAll([
+          'uid', 'type', 'label', 'holderName', 'brand',
+          'last4', 'expiryMonth', 'expiryYear',
+          'isDefault', 'createdAt', 'updatedAt'
+        ])
         && data.keys().hasOnly([
           'uid', 'type', 'label', 'holderName', 'brand',
-          'last4', 'expiryMonth', 'expiryYear', 'pixKeyMasked',
+          'last4', 'expiryMonth', 'expiryYear',
           'isDefault', 'createdAt', 'updatedAt'
         ])
         && data.uid is string
         && data.uid == request.auth.uid
         && data.uid == userId
         && data.uid.size() >= 1 && data.uid.size() <= 128
-        && data.type is string && data.type in ['credit_card', 'debit_card', 'pix']
+        && data.type is string && data.type == 'credit_card'
         && data.label is string && data.label.size() >= 2 && data.label.size() <= 80
         && data.holderName is string && data.holderName.size() >= 2 && data.holderName.size() <= 80
-        && data.brand is string && data.brand in ['visa', 'mastercard', 'amex', 'elo', 'hipercard', 'pix']
+        && data.brand is string && data.brand in ['visa', 'mastercard', 'amex', 'elo', 'hipercard']
         && data.isDefault is bool
-        && (
-          (data.type in ['credit_card', 'debit_card']
-            && data.brand in ['visa', 'mastercard', 'amex', 'elo', 'hipercard']
-            && 'last4' in data && data.last4 is string && data.last4.size() == 4 && data.last4.matches('^[0-9]{4}$')
-            && 'expiryMonth' in data && data.expiryMonth is int && data.expiryMonth >= 1 && data.expiryMonth <= 12
-            && 'expiryYear' in data && data.expiryYear is int && data.expiryYear >= 2025 && data.expiryYear <= 2050
-            && !('pixKeyMasked' in data))
-          ||
-          (data.type == 'pix'
-            && data.brand == 'pix'
-            && 'pixKeyMasked' in data && data.pixKeyMasked is string && data.pixKeyMasked.size() >= 3 && data.pixKeyMasked.size() <= 80
-            && !('last4' in data)
-            && !('expiryMonth' in data)
-            && !('expiryYear' in data))
-        )
+        && data.last4 is string && data.last4.size() == 4 && data.last4.matches('^[0-9]{4}$')
+        && data.expiryMonth is int && data.expiryMonth >= 1 && data.expiryMonth <= 12
+        && data.expiryYear is int && data.expiryYear >= 2025 && data.expiryYear <= 2050
         && data.createdAt is timestamp
         && data.updatedAt is timestamp;
     }
